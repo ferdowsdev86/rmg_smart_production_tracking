@@ -1,0 +1,131 @@
+# Production stack for 172.16.101.5 — uses the external ERP MariaDB
+# (172.16.101.70, set via .env); no local db container.
+#
+#   docker compose -f docker-compose.prod.yml up --build -d
+
+services:
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  proxysql:
+    image: proxysql/proxysql:2.6.2
+    restart: unless-stopped
+    volumes:
+      - ./proxysql/proxysql.cnf:/etc/proxysql.cnf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # HTTP APIs on gunicorn (threaded WSGI) — persistent DB connections
+    # (CONN_MAX_AGE) actually work here, unlike under Daphne/ASGI, which
+    # matters with the remote AWS DB. Websockets live in the `ws` service.
+    command: >
+      sh -c "pip install -q 'gunicorn>=21,<24' &&
+             python manage.py migrate &&
+             gunicorn core.wsgi:application -b 0.0.0.0:8000
+             --workers 2 --threads 8 --timeout 90 --keep-alive 65"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  ws:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: daphne -b 0.0.0.0 -p 8000 core.asgi:application
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: celery -A core worker -l info
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: celery -A core beat -l info
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  mqtt-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: python manage.py mqtt_summary_worker
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - mqtt
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "9443:443"
+    depends_on:
+      - backend
+
+volumes:
+  backend_media:
+  mosquitto_data:

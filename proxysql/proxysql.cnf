@@ -1,0 +1,37 @@
+## ProxySQL — local connection pool in front of the remote AWS MariaDB
+## (reached directly over the server's own OpenVPN link). The app connects
+## to proxysql:6033 with near-zero connection setup; ProxySQL keeps warm
+## backend connections so the ~700ms remote handshake is paid rarely.
+
+datadir="/var/lib/proxysql"
+
+admin_variables=
+{
+    admin_credentials="admin:admin"
+    mysql_ifaces="127.0.0.1:6032"
+}
+
+mysql_variables=
+{
+    threads=2
+    interfaces="0.0.0.0:6033"
+    server_version="10.11.0"
+    monitor_username="dbadmin"
+    monitor_password="6QjYxHk4mkDpFngKmV"
+    monitor_connect_interval=60000
+    monitor_ping_interval=10000
+    connect_timeout_server=10000
+    connect_retries_on_failure=3
+    free_connections_pct=100
+    connection_max_age_ms=0
+}
+
+mysql_servers=
+(
+    { address="10.135.50.27", port=3336, hostgroup=0, max_connections=50 }
+)
+
+mysql_users=
+(
+    { username="dbadmin", password="6QjYxHk4mkDpFngKmV", default_hostgroup=0, transaction_persistent=1 }
+)

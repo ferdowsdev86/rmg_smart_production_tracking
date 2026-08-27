@@ -1,0 +1,18 @@
+Django>=4.2,<6
+djangorestframework>=3.15,<4
+djangorestframework-simplejwt>=5.3,<6
+channels>=4.0,<5
+channels-redis>=4.2,<5
+daphne>=4.0,<5
+celery>=5.3,<6
+redis>=5.0,<6
+PyMySQL>=1.1,<2
+Pillow>=10.0,<12
+django-cors-headers>=4.3,<5
+openpyxl>=3.1,<4
+reportlab>=4.0,<5
+python-decouple>=3.8,<4
+paho-mqtt>=2.0,<3
+gunicorn>=21,<24
+# contrib build adds object trackers (CSRT/KCF) used for face tracking
+opencv-contrib-python-headless>=4.9,<5
