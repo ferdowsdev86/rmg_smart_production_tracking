@@ -6,6 +6,7 @@ import { CheckCircle2, Maximize, Minimize, PauseCircle } from "lucide-react";
 import { CardSkeleton } from "../components/LoadingSkeleton";
 import api from "../lib/api";
 import { useAuthStore } from "../store/useAuthStore";
+import { useSewingBoardSocket } from "../hooks/useSewingBoardSocket";
 
 /* Industrial TV board palette (matches the reference display) */
 const TV = {
@@ -125,14 +126,19 @@ export default function SewingTvBoard() {
 
   // optional ?date=YYYY-MM-DD to review a past day on the board
   const qdate = new URLSearchParams(window.location.search).get("date") || todayISO();
+  const isLiveDay = qdate === todayISO();
+
+  // Instant refresh when quality pass / barcode production / scans land.
+  useSewingBoardSocket(!!token && isLiveDay);
 
   const { data: D, isLoading, isError } = useQuery({
     queryKey: ["sewing-tv", qdate],
     queryFn: () =>
       api.get("/automation/floor_overview/", { params: { date: qdate } }).then((r) => r.data),
     enabled: !!token,
-    refetchInterval: 8000,
+    refetchInterval: isLiveDay ? 3000 : false,
     refetchOnWindowFocus: true,
+    refetchIntervalInBackground: true,
   });
 
   const view = useMemo(() => {

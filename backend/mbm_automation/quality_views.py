@@ -363,6 +363,7 @@ class QualityCheckView(APIView):
         )
 
         # Push updated summaries to every machine/date this bundle touched.
+        from mbm_automation.board_notify import notify_sewing_board
         from mbm_automation.production_summary import publish_machine_summary
 
         seen = set()
@@ -371,6 +372,9 @@ class QualityCheckView(APIView):
             if mid > 0 and (mid, r["date"]) not in seen:
                 seen.add((mid, r["date"]))
                 publish_machine_summary(mid, r["date"])
+
+        # Always ping boards even when no machin_id rows were touched.
+        notify_sewing_board(reason="quality_check")
 
         return Response(
             {

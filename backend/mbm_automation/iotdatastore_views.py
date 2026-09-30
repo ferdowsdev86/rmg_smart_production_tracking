@@ -452,6 +452,18 @@ class IotDataStoreView(APIView):
                     int(row.machin_id), _sewing_log_on_date(row.logged_at)
                 )
 
+        # Station login / scan changes → refresh live boards (presence + KPIs).
+        try:
+            from mbm_automation.board_notify import notify_sewing_board
+
+            notify_sewing_board(
+                reason="iot_scan",
+                machin_id=int(row.machin_id) if row.machin_id else None,
+                on_date=_sewing_log_on_date(row.logged_at) if row.logged_at else None,
+            )
+        except Exception:
+            pass
+
         machin_id = row.machin_id
         machin_user = (row.machin_user or "").strip()
         if machin_id is None or not machin_user:

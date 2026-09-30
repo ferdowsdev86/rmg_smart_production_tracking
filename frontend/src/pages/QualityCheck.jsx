@@ -453,6 +453,10 @@ export default function QualityCheck() {
     setOpenPart(null);
     queryClient.removeQueries({ queryKey: ["quality-bundle"] });
     queryClient.invalidateQueries({ queryKey: ["qc-line-totals"] });
+    // Live TV / floor boards (same browser + cross-tab via WS on server ping).
+    queryClient.invalidateQueries({ queryKey: ["sewing-tv"] });
+    queryClient.invalidateQueries({ queryKey: ["floor-overview"] });
+    queryClient.invalidateQueries({ queryKey: ["sewing-line-dashboard"] });
     setTimeout(() => inputRef.current?.focus(), 250);
   }
 

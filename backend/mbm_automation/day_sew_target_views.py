@@ -146,8 +146,10 @@ def _resolve_day_sew_target(machin_id: int, on_date: date) -> dict:
                         hour_target = int(round(target_qty / hours))
                     # Style names only — target_qty comes from the parent row.
                     cursor.execute(
-                        "SELECT DISTINCT stl_no FROM daily_line_style_targets "
-                        "WHERE pt_sewing_id = %s AND deleted_at IS NULL",
+                        # insertion order so the LAST entry is the newest style
+                        "SELECT stl_no FROM daily_line_style_targets "
+                        "WHERE pt_sewing_id = %s AND deleted_at IS NULL "
+                        "ORDER BY id",
                         [pt_id],
                     )
                     seen = set()

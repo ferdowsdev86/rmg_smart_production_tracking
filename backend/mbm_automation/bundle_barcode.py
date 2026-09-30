@@ -105,6 +105,41 @@ def lookup_bundle_by_barcode(barcode: str) -> dict[str, Any] | None:
     return data
 
 
+def bulk_qty_for_barcodes(barcodes: list[Any]) -> dict[str, int]:
+    """Bundle qty for MANY barcodes in one query (dashboard hot path).
+
+    The full per-barcode lookup joins 7+ ERP tables; over the VPN link that
+    costs ~0.15s each, which blew the request timeout once a day reached a
+    few hundred scans. This fetches only barcode → qty in chunks of 500.
+    Unknown barcodes come back as 0 (so callers never re-look them up).
+    """
+    keys = sorted({normalize_flag9(b) for b in barcodes if flag9_is_trackable_barcode(b)})
+    result: dict[str, int] = {k: 0 for k in keys}
+    if not keys:
+        return result
+    try:
+        with connections[_DB_ALIAS].cursor() as cursor:
+            for i in range(0, len(keys), 500):
+                chunk = keys[i : i + 500]
+                marks = ", ".join(["%s"] * len(chunk))
+                cursor.execute(
+                    "SELECT sp.barcode, s.qty "
+                    "FROM mbm_production.bundle_cut_slips sp "
+                    "JOIN mbm_production.bundle_cut_size_shade csz ON csz.id = sp.bcss_id "
+                    "JOIN mbm_production.bundle_cut_shade s ON s.id = csz.bc_shade_id "
+                    f"WHERE sp.barcode IN ({marks})",
+                    chunk,
+                )
+                for bc, qty in cursor.fetchall():
+                    try:
+                        result[str(bc)] = int(qty or 0)
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        pass
+    return result
+
+
 def production_qty_for_flag9(flag9: Any, *, cache: dict[str, int] | None = None) -> int:
     """
     Production pieces for one sewing_log.flag9 value.

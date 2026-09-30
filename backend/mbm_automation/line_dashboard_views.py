@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from floors.models import DayLineTarget
-from mbm_automation.bundle_barcode import production_qty_for_flag9
+from mbm_automation.bundle_barcode import bulk_qty_for_barcodes, production_qty_for_flag9
 from mbm_automation.day_sew_target_views import _calc_hour_target, _parse_on_date
 from mbm_automation.models import LineLayout, SewingLog
 from mbm_automation.sewing_analysis import _sewing_wall_datetime
@@ -83,13 +83,14 @@ class LineDayDashboardView(APIView):
         # Hourly production buckets from sewing_log flag9 (bundle qty / +1 pulse).
         cache: dict[str, int] = {}
         per_hour: dict[int, int] = defaultdict(int)
-        logs = (
+        logs = list(
             SewingLog.objects.filter(
                 machin_id__in=list(machines), logged_at__date=on_date
             )
             .exclude(flag9__in=["", "0"])
             .values_list("logged_at", "flag9")
         )
+        cache.update(bulk_qty_for_barcodes([f9 for _, f9 in logs]))
         for logged_at, flag9 in logs:
             wall = _sewing_wall_datetime(logged_at)
             hour = (wall or logged_at).hour
@@ -246,9 +247,14 @@ class FloorOverviewView(APIView):
         hour_actual: dict[int, int] = defaultdict(int)
         machine_hour: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
         last_flag3: dict[int, int] = {}
-        logs = SewingLog.objects.filter(
-            machin_id__in=all_machines, logged_at__date=on_date
-        ).order_by("id").values_list("machin_id", "logged_at", "flag3", "flag9")
+        logs = list(
+            SewingLog.objects.filter(
+                machin_id__in=all_machines, logged_at__date=on_date
+            ).order_by("id").values_list("machin_id", "logged_at", "flag3", "flag9")
+        )
+        # ONE batch query for every barcode's qty instead of a per-barcode
+        # ERP lookup (which timed out once a day had a few hundred scans).
+        cache.update(bulk_qty_for_barcodes([f9 for _, _, _, f9 in logs]))
         for mid, logged_at, flag3, flag9 in logs:
             last_flag3[int(mid)] = int(flag3 or 0)
             key = (flag9 or "").strip() if isinstance(flag9, str) else str(flag9 or "")

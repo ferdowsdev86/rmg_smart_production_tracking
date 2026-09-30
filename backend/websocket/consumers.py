@@ -63,3 +63,25 @@ class CameraConsumer(AsyncJsonWebsocketConsumer):
 
     async def camera_alert(self, event):
         await self.send_json(event.get("payload", {}))
+
+
+class SewingBoardConsumer(AsyncJsonWebsocketConsumer):
+    """Live sewing TV / floor overview refresh pings (quality, production)."""
+
+    group_name = "sewing_board"
+
+    async def connect(self):
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+        await self.send_json(
+            {
+                "type": "sewing.board_connected",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def sewing_board_refresh(self, event):
+        await self.send_json(event.get("payload", {}))

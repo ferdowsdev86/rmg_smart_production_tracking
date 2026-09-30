@@ -25,6 +25,17 @@ from mbm_automation.day_sew_target_views import (
 from mbm_automation.iotdatastore_views import _sewing_log_on_date
 
 
+def _compact_target(payload: dict) -> dict:
+    """Trim to the fields the IoT display needs: target_qty, hour_target and
+    the CURRENT style (the latest entry in daily_line_style_targets)."""
+    styles = payload.get("styles") or []
+    return {
+        "target_qty": payload.get("target_qty", 0),
+        "hour_target": payload.get("hour_target", 0),
+        "style": (styles[-1] if styles else payload.get("style") or ""),
+    }
+
+
 class DailySewingTargetView(APIView):
     """GET/POST /api/automation/daily_sewing_target/ — compact daily target lookup."""
 
@@ -46,7 +57,7 @@ class DailySewingTargetView(APIView):
                     {"detail": "Failed to resolve daily target.", "error": str(exc)},
                     status=503,
                 )
-            return Response(payload)
+            return Response(_compact_target(payload))
 
         return Response(
             {
@@ -65,14 +76,9 @@ class DailySewingTargetView(APIView):
                 },
                 "post_example": {"machin_id": 2233, "logged_at": "2026-07-01T12:25:55"},
                 "response_example": {
-                    "machin_id": 2233,
-                    "style": "5565-XYZ",
                     "target_qty": 950,
                     "hour_target": 95,
-                    "date": "2026-07-01",
-                    "floor": 1,
-                    "line": 1,
-                    "layout_id": 5,
+                    "style": "5565-XYZ",
                 },
             }
         )
@@ -95,4 +101,4 @@ class DailySewingTargetView(APIView):
                 {"detail": "Failed to resolve daily target.", "error": str(exc)},
                 status=503,
             )
-        return Response(payload, status=status.HTTP_200_OK)
+        return Response(_compact_target(payload), status=status.HTTP_200_OK)

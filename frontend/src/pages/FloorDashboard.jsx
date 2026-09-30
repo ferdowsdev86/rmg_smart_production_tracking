@@ -18,6 +18,7 @@ import {
 import { CardSkeleton } from "../components/LoadingSkeleton";
 import api from "../lib/api";
 import { useAuthStore } from "../store/useAuthStore";
+import { useSewingBoardSocket } from "../hooks/useSewingBoardSocket";
 
 /* validated palette (dataviz checks passed on light surface) */
 const C = { blue: "#2a78d6", orange: "#eb6834", green: "#1baf7a", amber: "#eda100", violet: "#7c5cd6" };
@@ -121,6 +122,8 @@ export default function FloorDashboard() {
   const matrixRef = useRef(null);
   const [fit, setFit] = useState({ scale: 1, height: null, chartRowH: 210, bottomRowH: 220 });
 
+  useSewingBoardSocket(!!token && date === todayISO());
+
   useEffect(() => {
     function refit() {
       const shell = shellRef.current;
@@ -188,8 +191,9 @@ export default function FloorDashboard() {
     queryKey: ["floor-overview", date],
     queryFn: () => api.get("/automation/floor_overview/", { params: { date } }).then((r) => r.data),
     enabled: !!token,
-    refetchInterval: 8000,
+    refetchInterval: date === todayISO() ? 3000 : false,
     refetchOnWindowFocus: true,
+    refetchIntervalInBackground: true,
   });
 
   const drillQ = useQuery({

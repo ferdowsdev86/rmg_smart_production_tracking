@@ -7,6 +7,7 @@ import { CardSkeleton } from "../components/LoadingSkeleton";
 import { SewingLineBoard } from "../components/sewing/SewingLineBoard";
 import api from "../lib/api";
 import { useAuthStore } from "../store/useAuthStore";
+import { useSewingBoardSocket } from "../hooks/useSewingBoardSocket";
 
 function localDateString(d = new Date()) {
   const y = d.getFullYear();
@@ -37,6 +38,9 @@ export default function SewingLineDashboard() {
 
   const isToday = logDate === localDateString();
 
+  // Instant refresh when QC / production actions land.
+  useSewingBoardSocket(!!token && isToday);
+
   const {
     data,
     isLoading,
@@ -54,7 +58,8 @@ export default function SewingLineDashboard() {
         })
         .then((r) => r.data),
     enabled: !!token && !!active,
-    refetchInterval: isToday ? 10_000 : false,
+    refetchInterval: isToday ? 3_000 : false,
+    refetchIntervalInBackground: true,
     retry: 1,
   });
 
@@ -149,7 +154,7 @@ export default function SewingLineDashboard() {
           {data?.generated_at ? (
             <p className="text-xs text-slate-500 text-right">
               Updated {new Date(data.generated_at).toLocaleString()}
-              {isToday ? " · auto-refresh 10s" : " · historical day (no auto-refresh)"}
+              {isToday ? " · live (WS + 3s)" : " · historical day (no auto-refresh)"}
             </p>
           ) : null}
         </>

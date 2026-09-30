@@ -77,8 +77,9 @@ def publish_machine_summary(machin_id: int, on_date: date | None = None) -> bool
 
     Called after every machin_production_count write (scan qty / defect /
     reject) so devices get the fresh numbers without polling. Best effort —
-    never raises.
+    never raises. Also pings the sewing TV / floor live boards over Channels.
     """
+    ok = False
     try:
         if not machin_id or int(machin_id) <= 0:
             return False
@@ -93,9 +94,20 @@ def publish_machine_summary(machin_id: int, on_date: date | None = None) -> bool
             hostname=config("MQTT_HOST", default="mqtt"),
             port=int(config("MQTT_PORT", default="1883")),
         )
-        return True
+        ok = True
     except Exception:
-        return False
+        ok = False
+    try:
+        from mbm_automation.board_notify import notify_sewing_board
+
+        notify_sewing_board(
+            reason="production",
+            machin_id=int(machin_id) if machin_id else None,
+            on_date=on_date,
+        )
+    except Exception:
+        pass
+    return ok
 
 
 def parse_summary_date(raw: str | None) -> date | None:
