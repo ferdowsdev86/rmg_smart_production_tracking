@@ -585,49 +585,60 @@ export default function SewingTvBoard() {
             })() : null}
           </Panel>
 
-          <Panel title="Station Hourly Pass" className="col-span-4">
-            {(D.machine_hours || []).length ? (
-              <div className="h-full overflow-auto">
-                <table className="min-w-full text-[12.5px]">
+          <Panel title="Station Hourly Pass — Last 3 Hours" className="col-span-5">
+            {(D.machine_hours || []).length ? (() => {
+              const hrs = stationHours.slice(-3);
+              const ms = D.machine_hours || [];
+              const half = Math.ceil(ms.length / 2);
+              const cols = ms.length > 12 ? [ms.slice(0, half), ms.slice(half)] : [ms];
+              const Tbl = ({ list }) => (
+                <table className="min-w-full text-[11.5px]">
                   <thead>
-                    <tr className="text-[11px] font-bold uppercase tracking-wider" style={{ color: TV.label }}>
-                      <th className="border-b py-1.5 text-left" style={{ borderColor: TV.border }}>Station</th>
-                      {stationHours.map((h) => (
-                        <th key={h} className="border-b py-1.5 text-right" style={{ borderColor: TV.border }}>
+                    <tr className="text-[9px] font-bold uppercase tracking-wider" style={{ color: TV.label }}>
+                      <th className="border-b py-1 text-left" style={{ borderColor: TV.border }}>Station</th>
+                      {hrs.map((h) => (
+                        <th key={h} className="border-b py-1 text-right" style={{ borderColor: TV.border }}>
                           {String(h).padStart(2, "0")}h
                         </th>
                       ))}
-                      <th className="border-b py-1.5 text-right" style={{ borderColor: TV.border, color: TV.green }}>Total</th>
+                      <th className="border-b py-1 text-right" style={{ borderColor: TV.border, color: TV.green }}>Total</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(D.machine_hours || []).map((m) => (
+                    {list.map((m) => (
                       <tr key={m.machin_id}>
-                        <td className="border-b py-2 font-bold text-white" style={{ borderColor: "#123055" }}>M{m.machin_id}</td>
-                        {stationHours.map((h) => {
+                        <td className="border-b py-[3px] pr-1 font-bold text-white" style={{ borderColor: "#123055" }}>M{m.machin_id}</td>
+                        {hrs.map((h) => {
                           const v = m.by_hour?.[String(h)] || 0;
                           return (
-                            <td key={h} className="border-b py-2 text-right tabular-nums" style={{ borderColor: "#123055", color: v ? "#ffffff" : "#3d5a80" }}>
+                            <td key={h} className="border-b py-[3px] text-right tabular-nums" style={{ borderColor: "#123055", color: v ? "#ffffff" : "#3d5a80" }}>
                               {v || "—"}
                             </td>
                           );
                         })}
-                        <td className="border-b py-2 text-right font-bold tabular-nums" style={{ borderColor: "#123055", color: TV.green }}>
+                        <td className="border-b py-[3px] text-right font-bold tabular-nums" style={{ borderColor: "#123055", color: TV.green }}>
                           {fmt(m.total)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
-            ) : (
+              );
+              return (
+                <div className={`grid h-full min-h-0 content-start gap-x-4 overflow-auto ${cols.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                  {cols.map((c, i) => (
+                    <div key={i}><Tbl list={c} /></div>
+                  ))}
+                </div>
+              );
+            })() : (
               <div className="flex h-full items-center justify-center text-[14px] font-semibold" style={{ color: TV.label }}>
                 No station output yet
               </div>
             )}
           </Panel>
 
-          <Panel title="Top NPT Reasons" className="col-span-3">
+          <Panel title="Top NPT Reasons" className="col-span-2">
             {nptCats.length ? (
               <table className="min-w-full text-[13px]">
                 <thead>

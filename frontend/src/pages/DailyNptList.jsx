@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, CheckCircle2, Filter, ListChecks, RefreshCw, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, FileSpreadsheet, Filter, ListChecks, RefreshCw, X } from "lucide-react";
 import toast from "react-hot-toast";
 
 import api from "../lib/api";
@@ -241,14 +241,51 @@ export default function DailyNptList() {
   );
 
   const filteredRows = useMemo(() => {
-    if (!categoryFilter) return rows;
-    return rows.filter((r) => r.category === categoryFilter);
+    const base = categoryFilter ? rows.filter((r) => r.category === categoryFilter) : rows;
+    // "Waiting for end" (still-running NPT) rows always on top
+    const waiting = (r) => (r.is_open || r.can_confirm_reason === false ? 0 : 1);
+    return [...base].sort((a, b) => waiting(a) - waiting(b));
   }, [rows, categoryFilter]);
 
   const dayTotalHours = useMemo(
     () => rows.reduce((sum, r) => sum + Number(r.npt_hour || 0), 0),
     [rows]
   );
+
+  function exportExcel() {
+    const esc = (v) => String(v ?? "").replace(/</g, "&lt;");
+    const status = (r) =>
+      r.is_open || r.can_confirm_reason === false
+        ? "Waiting for end"
+        : r.npt_reason
+          ? "Confirmed"
+          : "Pending reason";
+    const bodyRows = filteredRows
+      .map(
+        (r) =>
+          `<tr><td>${esc(r.date)}</td><td>${esc(r.machin_id)}</td><td>${esc(r.unit)}</td><td class="c">${esc(r.floor)}</td><td class="c">${esc(r.line)}</td><td>${esc(r.category)}</td><td>${esc(r.start_log_id)}</td><td>${esc(r.start_at)}</td><td>${r.is_open ? "In progress" : esc(r.stop_at)}</td><td>${esc(r.npt_reason)}</td><td class="c">${r.is_open ? "" : formatNptHour(r.npt_hour)}</td><td>${esc(r.remarks)}</td><td>${status(r)}</td></tr>`,
+      )
+      .join("");
+    const sumRows = categorySummary
+      .map((x) => `<tr><td>${esc(x.category)}</td><td class="c">${x.events}</td><td class="c">${formatNptHour(x.totalHours)}</td></tr>`)
+      .join("");
+    const html = `<html><head><meta charset="utf-8"><title>Daily NPT ${date}</title>
+<style>body{font-family:Arial,sans-serif}h1{font-size:16px;margin:0}h2{font-size:13px;margin:14px 0 4px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #94a3b8;padding:3px 6px;text-align:left}th{background:#f1f5f9;text-transform:uppercase;font-size:9.5px}td.c{text-align:center}</style>
+</head><body>
+<h1>MBM Group — Daily NPT Report (${date})</h1>
+<h2>Summary — Total NPT ${formatNptHour(dayTotalHours)}</h2>
+<table><thead><tr><th>Category</th><th>Events</th><th>NPT Hour</th></tr></thead><tbody>${sumRows}</tbody></table>
+<h2>Details${categoryFilter ? ` — ${esc(categoryFilter)}` : ""}</h2>
+<table><thead><tr><th>Date</th><th>Machine</th><th>Unit</th><th>Floor</th><th>Line</th><th>Category</th><th>Event ID</th><th>Start</th><th>Stop</th><th>NPT Reason</th><th>NPT Hour</th><th>Remarks</th><th>Status</th></tr></thead>
+<tbody>${bodyRows}</tbody></table>
+</body></html>`;
+    const blob = new Blob(["\ufeff" + html], { type: "application/vnd.ms-excel" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `daily_npt_${date}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 
   return (
     <div className="space-y-4">
@@ -292,6 +329,15 @@ export default function DailyNptList() {
           >
             <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
             Sync
+          </button>
+          <button
+            type="button"
+            onClick={exportExcel}
+            disabled={filteredRows.length === 0}
+            className="flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Excel
           </button>
         </div>
       </header>
