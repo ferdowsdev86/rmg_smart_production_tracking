@@ -486,7 +486,7 @@ export default function SewingTvBoard() {
             </div>
           </Panel>
 
-          <Panel title="Quality" className="col-span-2">
+          <Panel title="Quality" className="col-span-3">
             <div className="flex h-full flex-col items-center justify-between py-1 text-center">
               <div>
                 <StatLabel>Defects</StatLabel>
@@ -527,7 +527,7 @@ export default function SewingTvBoard() {
             </div>
           </Panel>
 
-          <Panel title="NPT (Today)" className="col-span-2">
+          <Panel title="NPT (Today)" className="col-span-3">
             <div className="flex h-full flex-col items-center justify-between py-1 text-center">
               <div className="text-[34px] font-extrabold tabular-nums leading-tight" style={glow((D.npt?.total_minutes || 0) > 0 ? TV.red : TV.green)}>
                 {minsToClock(D.npt?.total_minutes)}
@@ -543,22 +543,6 @@ export default function SewingTvBoard() {
             </div>
           </Panel>
 
-          <Panel title="Alerts" className="col-span-2">
-            <div className="flex h-full flex-col justify-center">
-              {alerts.map((a, i) => (
-                <div key={i} className="flex items-center gap-2 border-b py-2" style={{ borderColor: "#123055" }}>
-                  <span
-                    className={`h-3 w-3 shrink-0 rounded-full ${a.lvl === "red" ? "animate-pulse" : ""}`}
-                    style={{
-                      background: a.lvl === "red" ? TV.red : a.lvl === "yellow" ? TV.yellow : TV.green,
-                      boxShadow: `0 0 8px ${a.lvl === "red" ? TV.red : a.lvl === "yellow" ? TV.yellow : TV.green}99`,
-                    }}
-                  />
-                  <span className="text-[12px] font-semibold leading-snug text-white">{a.text}</span>
-                </div>
-              ))}
-            </div>
-          </Panel>
         </div>
 
         {/* ============ row 2 ============ */}
@@ -589,8 +573,9 @@ export default function SewingTvBoard() {
             {(D.machine_hours || []).length ? (() => {
               const hrs = stationHours.slice(-3);
               const ms = D.machine_hours || [];
-              const half = Math.ceil(ms.length / 2);
-              const cols = ms.length > 12 ? [ms.slice(0, half), ms.slice(half)] : [ms];
+              const colCount = ms.length > 24 ? 3 : ms.length > 12 ? 2 : 1;
+              const per = Math.ceil(ms.length / colCount);
+              const cols = Array.from({ length: colCount }, (_, i) => ms.slice(i * per, (i + 1) * per)).filter((c) => c.length);
               const Tbl = ({ list }) => (
                 <table className="min-w-full text-[11.5px]">
                   <thead>
@@ -625,7 +610,7 @@ export default function SewingTvBoard() {
                 </table>
               );
               return (
-                <div className={`grid h-full min-h-0 content-start gap-x-4 overflow-auto ${cols.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                <div className={`grid h-full min-h-0 content-start gap-x-3 overflow-auto ${cols.length === 3 ? "grid-cols-3" : cols.length === 2 ? "grid-cols-2" : "grid-cols-1"}`}>
                   {cols.map((c, i) => (
                     <div key={i}><Tbl list={c} /></div>
                   ))}
