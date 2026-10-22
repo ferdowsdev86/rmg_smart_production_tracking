@@ -134,6 +134,23 @@ def _rfid_response_user_for_insert(row: SewingLog, on_date) -> str:
     return machin_user
 
 
+# Echo/debug fields the devices asked to drop from the POST response
+# (saves device RAM; the useful payload — status, employee, wr/mrt/npt,
+# production, defect, barcode fields, NPT confirmations — stays).
+_DEVICE_RESPONSE_DROP = frozenset(
+    {
+        "machin_id", "machin_user", "logged_at",
+        "flag1", "flag2", "flag3", "flag4", "flag5",
+        "flag6", "flag7", "flag8", "flag9",
+        "id", "last_insert_id", "created_at", "updated_at", "message",
+    }
+)
+
+
+def _slim_device_response(payload: dict) -> dict:
+    return {k: v for k, v in payload.items() if k not in _DEVICE_RESPONSE_DROP}
+
+
 def _npt_stage_confirmations(row) -> dict:
     """Server confirmation for the 3-stage NPT protocol: echo the stage back.
     flag4 → MachineNPT, flag5 → MaterialNPT, flag7 → TechnicalNPT
@@ -423,7 +440,7 @@ class IotDataStoreView(APIView):
             existing = _find_existing_barcode_scan(machin_id, flag9)
             if existing is not None:
                 return Response(
-                    _detected_barcode_response(existing, payload),
+                    _slim_device_response(_detected_barcode_response(existing, payload)),
                     status=status.HTTP_200_OK,
                 )
 
@@ -486,10 +503,12 @@ class IotDataStoreView(APIView):
         machin_user = (row.machin_user or "").strip()
         if machin_id is None or not machin_user:
             return Response(
-                {
-                    **_post_insert_response(row, response_user=machin_user, rfid_payload=None),
-                    **_npt_stage_confirmations(row),
-                },
+                _slim_device_response(
+                    {
+                        **_post_insert_response(row, response_user=machin_user, rfid_payload=None),
+                        **_npt_stage_confirmations(row),
+                    }
+                ),
                 status=status.HTTP_201_CREATED,
             )
 
@@ -509,9 +528,11 @@ class IotDataStoreView(APIView):
             rfid_payload["employee_name"] = identity["employee_name"]
             rfid_payload["designation"] = identity["designation"]
         return Response(
-            {
-                **_post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
-                **_npt_stage_confirmations(row),
-            },
+            _slim_device_response(
+                {
+                    **_post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
+                    **_npt_stage_confirmations(row),
+                }
+            ),
             status=status.HTTP_201_CREATED,
         )
