@@ -133,13 +133,17 @@ export function deriveMachines(D, shift, rates, operators) {
     return { mid, byHour, total };
   });
   const runningCount = Math.max(1, rows.filter((r) => r.total > 0).length);
-  // Machine output is operation-level pcs, far above the finished-garment
-  // hour target — so the per-machine benchmark is the LINE AVERAGE machine
-  // rate (total operation pcs / running machines / completed hours). A
-  // machine at the line average shows ≈100% efficiency.
+  // EFF benchmark = the line's HOUR TARGET: every machine is measured
+  // against the hourly target (achieve ÷ (target × hours)). When no day
+  // target exists, fall back to the line-average machine rate.
   const doneHrs = Math.max(1, rates.completedHours || 1);
   const totalAllPcs = rows.reduce((a, r) => a + r.total, 0);
-  const machineHourTarget = totalAllPcs > 0 ? totalAllPcs / runningCount / doneHrs : 0;
+  const machineHourTarget =
+    rates.hourTarget > 0
+      ? rates.hourTarget
+      : totalAllPcs > 0
+        ? totalAllPcs / runningCount / doneHrs
+        : 0;
 
   const nowH = shift.nowH;
   const lastDoneH = shift.isToday ? nowH - 1 : hourList[hourList.length - 1];
@@ -203,7 +207,10 @@ export function deriveMachines(D, shift, rates, operators) {
       nptOpen: open,
       nptHourBadges: nptHourBadges.get(r.mid) || {},
       spark,
-      trend: spark.length >= 2 ? Math.sign(spark[spark.length - 1] - avg) : 0,
+      // trend arrow: last completed hour vs the machine hour TARGET
+      trend: spark.length
+        ? Math.sign(spark[spark.length - 1] - (machineHourTarget > 0 ? machineHourTarget : avg))
+        : 0,
       machineHourTarget,
     };
   });
