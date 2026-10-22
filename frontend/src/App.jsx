@@ -3,6 +3,7 @@ import { Toaster } from "react-hot-toast";
 import { AppShell } from "./components/AppShell";
 import { ProtectedLayout } from "./components/ProtectedLayout";
 import FloorDashboard from "./pages/FloorDashboard";
+import LiveDashboard from "./pages/LiveDashboard";
 import LineDiagram from "./pages/LineDiagram";
 import LineLayout from "./pages/LineLayout";
 import StationView from "./pages/StationView";
@@ -27,7 +28,8 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedLayout />}>
           <Route element={<AppShell />}>
-            <Route index element={<FloorDashboard />} />
+            <Route index element={<LiveDashboard />} />
+            <Route path="classic-dashboard" element={<FloorDashboard />} />
             <Route path="lines" element={<LineDiagram />} />
             <Route path="line-layout" element={<LineLayout />} />
             <Route path="machin-manpower-layout" element={<MachinManpowerLayout />} />
