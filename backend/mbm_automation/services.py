@@ -282,6 +282,64 @@ def build_sewing_line_dashboard(*, floor: int, line_no: int, on_date: Optional[d
     if not output_stations:
         output_stations = [_virtual_station("output", floor, line_no)]
 
+    # --- per-employee card metrics -------------------------------------------
+    # PROD   = station hourly pass total (scan-based flag9 qty, whole machine —
+    #          same source as the TV board's Station Hourly Pass matrix)
+    # DEFECT = QC defect sum for the machine (day_qc_diffect — quality report)
+    # TARGET = ERP line day target split equally over the work stations
+    try:
+        from collections import defaultdict as _dd
+
+        from django.db import connections as _conns
+
+        from mbm_automation.bundle_barcode import (
+            bulk_qty_for_barcodes,
+            production_qty_for_flag9,
+        )
+
+        all_cards = (*machines, *input_stations, *output_stations)
+        mids = [s.get("machin_no") for s in all_cards if s.get("machin_no")]
+        scan_logs = list(
+            SewingLog.objects.filter(
+                logged_at__date=line_filter_day, machin_id__in=mids
+            ).values_list("machin_id", "flag9")
+        )
+        qty_cache = bulk_qty_for_barcodes([f9 for _, f9 in scan_logs])
+        prod_by_machine: dict[int, int] = _dd(int)
+        for mid, f9 in scan_logs:
+            prod_by_machine[int(mid)] += production_qty_for_flag9(f9, cache=qty_cache)
+
+        with _conns["default"].cursor() as cur:
+            cur.execute(
+                "SELECT machin_id, COALESCE(SUM(defect_qty), 0) FROM day_qc_diffect "
+                "WHERE date = %s AND machin_id IS NOT NULL GROUP BY machin_id",
+                [line_filter_day],
+            )
+            qc_defect_by_machine = {int(r[0]): int(r[1] or 0) for r in cur.fetchall()}
+
+        per_station_target = 0
+        try:
+            from mbm_automation.day_sew_target_views import _resolve_day_sew_target
+
+            if work_rows:
+                t = _resolve_day_sew_target(int(work_rows[0].machin_no), line_filter_day)
+                line_erp_target = int(t.get("target_qty") or 0)
+                if line_erp_target and machines:
+                    per_station_target = int(round(line_erp_target / len(machines)))
+        except Exception:
+            pass
+
+        for station in all_cards:
+            mid = station.get("machin_no")
+            if not mid:
+                continue
+            station["prod_total"] = int(prod_by_machine.get(int(mid), 0))
+            station["defect_total"] = int(qc_defect_by_machine.get(int(mid), 0))
+            if per_station_target:
+                station["daily_target"] = per_station_target
+    except Exception:
+        pass
+
     present = sum(1 for m in machines if m.get("present_status") == "Active" or m["status"] == "present")
     running = sum(1 for m in machines if m["status"] == "running" or m["runtime_total"] > 0)
     problem = sum(1 for m in machines if m["status"] == "problem" or m["has_problem"])
