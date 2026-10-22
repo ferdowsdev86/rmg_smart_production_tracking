@@ -430,7 +430,10 @@ function LineLayoutCard({ station, slotLabel, side, trafficActive, problemRed })
           <RailUserPhoto station={station} />
         </div>
         <div className={`flex items-center justify-center py-3.5 ${statusStyles.railBot}`}>
-          <span className="text-3xl font-extrabold tabular-nums leading-none text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.25)]">
+          <span
+            className={`${String(station.machin_no ?? "").length > 4 ? "text-xl" : "text-3xl"} font-extrabold tabular-nums leading-none text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.25)]`}
+            title={String(station.machin_no ?? "")}
+          >
             {station.machin_no ?? "—"}
           </span>
         </div>

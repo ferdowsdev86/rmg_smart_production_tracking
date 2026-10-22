@@ -317,15 +317,13 @@ def build_sewing_line_dashboard(*, floor: int, line_no: int, on_date: Optional[d
             )
             qc_defect_by_machine = {int(r[0]): int(r[1] or 0) for r in cur.fetchall()}
 
-        per_station_target = 0
+        line_card_target = 0
         try:
             from mbm_automation.day_sew_target_views import _resolve_day_sew_target
 
             if work_rows:
                 t = _resolve_day_sew_target(int(work_rows[0].machin_no), line_filter_day)
-                line_erp_target = int(t.get("target_qty") or 0)
-                if line_erp_target and machines:
-                    per_station_target = int(round(line_erp_target / len(machines)))
+                line_card_target = int(t.get("target_qty") or 0)
         except Exception:
             pass
 
@@ -335,8 +333,8 @@ def build_sewing_line_dashboard(*, floor: int, line_no: int, on_date: Optional[d
                 continue
             station["prod_total"] = int(prod_by_machine.get(int(mid), 0))
             station["defect_total"] = int(qc_defect_by_machine.get(int(mid), 0))
-            if per_station_target:
-                station["daily_target"] = per_station_target
+            if line_card_target:
+                station["daily_target"] = line_card_target
     except Exception:
         pass
 
