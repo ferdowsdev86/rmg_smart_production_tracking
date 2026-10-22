@@ -10,6 +10,7 @@ export default function ActionAlerts({ alerts }) {
   return (
     <Panel
       title="Action Alerts"
+      className="flex h-full flex-col"
       right={<span className="text-[11px] font-semibold text-slate-400">{visible.length} open · {alerts.length - visible.length} acknowledged</span>}
     >
       {visible.length === 0 ? (
@@ -17,7 +18,7 @@ export default function ActionAlerts({ alerts }) {
           <Check className="h-4 w-4" /> No open issues — line is healthy.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="max-h-[300px] flex-1 divide-y divide-slate-100 overflow-y-auto pr-1">
           {visible.map((a) => (
             <li key={a.id} className="flex items-center gap-2.5 py-1.5">
               <RagDot rag={a.sev === "red" ? "red" : "amber"} pulse={a.sev === "red"} />

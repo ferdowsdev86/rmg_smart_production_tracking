@@ -133,7 +133,13 @@ export function deriveMachines(D, shift, rates, operators) {
     return { mid, byHour, total };
   });
   const runningCount = Math.max(1, rows.filter((r) => r.total > 0).length);
-  const machineHourTarget = rates.hourTarget ? rates.hourTarget / runningCount : 0;
+  // Machine output is operation-level pcs, far above the finished-garment
+  // hour target — so the per-machine benchmark is the LINE AVERAGE machine
+  // rate (total operation pcs / running machines / completed hours). A
+  // machine at the line average shows ≈100% efficiency.
+  const doneHrs = Math.max(1, rates.completedHours || 1);
+  const totalAllPcs = rows.reduce((a, r) => a + r.total, 0);
+  const machineHourTarget = totalAllPcs > 0 ? totalAllPcs / runningCount / doneHrs : 0;
 
   const nowH = shift.nowH;
   const lastDoneH = shift.isToday ? nowH - 1 : hourList[hourList.length - 1];

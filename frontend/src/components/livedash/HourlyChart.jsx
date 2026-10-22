@@ -77,12 +77,12 @@ export default function HourlyChart({ D, shift, rates, chartRef }) {
   }, [D, shift, rates]);
 
   return (
-    <Panel id="sec-hourly" title="Hourly Target vs Achieve" right={
+    <Panel id="sec-hourly" className="h-full" title="Hourly Target vs Achieve" right={
       <span className="text-[11px] font-semibold text-slate-400">
         hour target {rates.hourTarget} · avg {Math.round(rates.currentAvgRate)}/hr
       </span>
     }>
-      <ReactECharts ref={chartRef} option={option} style={{ height: 240 }} notMerge />
+      <ReactECharts ref={chartRef} option={option} style={{ height: 320 }} notMerge />
     </Panel>
   );
 }
