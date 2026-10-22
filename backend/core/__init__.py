@@ -13,3 +13,7 @@ if not config("USE_SQLITE", default=False, cast=bool):
             "From the backend folder run: python -m pip install PyMySQL"
         ) from exc
     pymysql.install_as_MySQLdb()
+    # Django 6 refuses the shim's reported mysqlclient version (1.4.6);
+    # PyMySQL implements the needed API, so present a new-enough version.
+    if pymysql.version_info < (2, 2, 1):
+        pymysql.version_info = (2, 2, 1, "final", 0)

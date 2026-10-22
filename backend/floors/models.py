@@ -484,6 +484,7 @@ class NptLibrary(models.Model):
     CATEGORY_MACHINE = 1
     CATEGORY_MATERIAL = 2
     CATEGORY_PRODUCTION = 3
+    CATEGORY_TECHNICAL = 4
 
     category = models.CharField(max_length=100, blank=True, default="")
     npt_reason = models.CharField(max_length=255, blank=True, default="")

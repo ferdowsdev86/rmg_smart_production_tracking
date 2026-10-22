@@ -27,6 +27,7 @@ CATEGORY_ID_BY_FLAG = {
     "flag4": NptLibrary.CATEGORY_MACHINE,
     "flag5": NptLibrary.CATEGORY_MATERIAL,
     "flag6": NptLibrary.CATEGORY_PRODUCTION,
+    "flag7": NptLibrary.CATEGORY_TECHNICAL,
 }
 
 INTERVAL_CATEGORIES = frozenset(
@@ -34,15 +35,27 @@ INTERVAL_CATEGORIES = frozenset(
         "Machine & Utility Related",
         "Material Related",
         "Production Related",
+        "Technical Related",
     }
 )
 
+# Devices switched to the 3-stage protocol (1 = operator call, 2 = responder
+# punched in, 3 = IE confirmed end) on this date; before it, flag=2 ended NPT.
+NPT_STAGE_PROTOCOL_DATE = date(2026, 10, 22)
+
+DEFAULT_CATEGORY_NAMES = {
+    NptLibrary.CATEGORY_MACHINE: "Machine & Utility Related",
+    NptLibrary.CATEGORY_MATERIAL: "Material Related",
+    NptLibrary.CATEGORY_PRODUCTION: "Production Related",
+    NptLibrary.CATEGORY_TECHNICAL: "Technical Related",
+}
+
 
 def _category_name_by_id() -> dict[int, str]:
-    mapping: dict[int, str] = {}
+    mapping: dict[int, str] = dict(DEFAULT_CATEGORY_NAMES)
     for row in NptLibrary.objects.values("catogery_id", "category"):
         cid = row["catogery_id"]
-        if cid and cid not in mapping and row["category"]:
+        if cid and row["category"]:
             mapping[cid] = row["category"]
     return mapping
 
@@ -59,6 +72,7 @@ def _flag_npt_intervals(
     flag_attr: str,
     *,
     use_flag2_stop: bool = False,
+    stop_on_two: bool = True,
 ) -> list[dict]:
     """Pair start (flag=1) → stop; remaining open starts are returned as in-progress rows.
 
@@ -106,8 +120,14 @@ def _flag_npt_intervals(
             open_session = (ts, log.id, user)
             continue
 
-        if flag_val == 2:
-            _close(ts, log.id, f"{flag_attr}=2")
+        if flag_val == 3:
+            # Stage protocol: 3 = IE confirmed the NPT has ended.
+            _close(ts, log.id, f"{flag_attr}=3")
+        elif flag_val == 2:
+            # Stage protocol: 2 = responder punched in — NPT keeps running.
+            # Legacy data (before the protocol date) used 2 as the stop.
+            if stop_on_two:
+                _close(ts, log.id, f"{flag_attr}=2")
         elif use_flag2_stop and flag2 == 1:
             # Same machine / date / line — flag2 logged_at ends the open NPT.
             _close(ts, log.id, "flag2=1")
@@ -185,7 +205,9 @@ def build_daily_npt_list(on_date: Optional[date] = None) -> list[dict]:
         ("flag4", NptLibrary.CATEGORY_MACHINE, True),
         ("flag5", NptLibrary.CATEGORY_MATERIAL, True),
         ("flag6", NptLibrary.CATEGORY_PRODUCTION, True),
+        ("flag7", NptLibrary.CATEGORY_TECHNICAL, True),
     )
+    legacy_stop_on_two = on_date < NPT_STAGE_PROTOCOL_DATE
 
     for mid, machine_logs in by_machine.items():
         floor, line = floor_line.get(mid, (0, 0))
@@ -195,7 +217,9 @@ def build_daily_npt_list(on_date: Optional[date] = None) -> list[dict]:
             if not category:
                 continue
             for iv in _flag_npt_intervals(
-                machine_logs, flag_attr, use_flag2_stop=use_flag2_stop
+                machine_logs, flag_attr,
+                use_flag2_stop=use_flag2_stop,
+                stop_on_two=legacy_stop_on_two,
             ):
                 if not iv.get("is_open") and iv["npt_hour"] <= 0:
                     continue

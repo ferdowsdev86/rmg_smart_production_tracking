@@ -134,6 +134,21 @@ def _rfid_response_user_for_insert(row: SewingLog, on_date) -> str:
     return machin_user
 
 
+def _npt_stage_confirmations(row) -> dict:
+    """Server confirmation for the 3-stage NPT protocol: echo the stage back.
+    flag4 → MachineNPT, flag5 → MaterialNPT, flag7 → TechnicalNPT
+    (1 = call received, 2 = responder present, 3 = NPT ended)."""
+    out: dict = {}
+    for attr, key in (("flag4", "MachineNPT"), ("flag5", "MaterialNPT"), ("flag7", "TechnicalNPT")):
+        try:
+            val = int(getattr(row, attr, 0) or 0)
+        except (TypeError, ValueError):
+            val = 0
+        if val:
+            out[key] = val
+    return out
+
+
 def _factory_wall_now():
     """Server-side timestamp following the sewing_log convention: the value
     stored is the FACTORY wall clock (Asia/Dhaka) carrying a UTC marker.
@@ -142,9 +157,12 @@ def _factory_wall_now():
 
     from django.conf import settings as _settings
 
+    from datetime import timezone as _dt_tz
+
     tz = ZoneInfo(getattr(_settings, "SEWING_LOG_TIMEZONE", "Asia/Dhaka") or "Asia/Dhaka")
     wall = timezone.now().astimezone(tz).replace(tzinfo=None)
-    return timezone.make_aware(wall, timezone.utc)
+    # stdlib utc: django.utils.timezone.utc was removed in Django 5
+    return timezone.make_aware(wall, _dt_tz.utc)
 
 
 def _sewing_log_on_date(logged_at) -> date:
@@ -468,7 +486,10 @@ class IotDataStoreView(APIView):
         machin_user = (row.machin_user or "").strip()
         if machin_id is None or not machin_user:
             return Response(
-                _post_insert_response(row, response_user=machin_user, rfid_payload=None),
+                {
+                    **_post_insert_response(row, response_user=machin_user, rfid_payload=None),
+                    **_npt_stage_confirmations(row),
+                },
                 status=status.HTTP_201_CREATED,
             )
 
@@ -488,6 +509,9 @@ class IotDataStoreView(APIView):
             rfid_payload["employee_name"] = identity["employee_name"]
             rfid_payload["designation"] = identity["designation"]
         return Response(
-            _post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
+            {
+                **_post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
+                **_npt_stage_confirmations(row),
+            },
             status=status.HTTP_201_CREATED,
         )

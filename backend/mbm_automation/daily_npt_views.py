@@ -59,6 +59,7 @@ def _serialize(row: DailyNptStatus, live: Optional[dict] = None) -> dict:
                 "Machine & Utility Related",
                 "Material Related",
                 "Production Related",
+                "Technical Related",
             ),
         ),
         "can_confirm_reason": reason_confirm_allowed(
