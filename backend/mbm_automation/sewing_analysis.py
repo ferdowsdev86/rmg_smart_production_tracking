@@ -369,7 +369,7 @@ def _build_user_sessions(
         for log in logs[start_i + 1 : span_stop]:
             if _machin_user_id(log) != user:
                 continue
-            runtime_total += log.flag1 or 0
+            runtime_total += _flag1_runtime(log)
 
         duration_sec = _duration_seconds(present_from, session_end)
         until_iso = None
@@ -603,7 +603,7 @@ def analyze_machin_logs(
         uid = preferred_uid or _machin_user_id(latest)
         hr = lookup_hr_profile(uid)
         runtime_total = sum(
-            (log.flag1 or 0) for log in logs if _machin_user_id(log) == uid
+            _flag1_runtime(log) for log in logs if _machin_user_id(log) == uid
         )
         user_sessions = _build_user_sessions(
             logs, uid, day=day, today=today, now=now, last_log_time=last_log_time
@@ -738,6 +738,18 @@ def _is_operator_login_log(log) -> bool:
     return _is_flag3_only_login_log(log)
 
 
+def _flag1_runtime(log) -> int:
+    """flag1 carries machine-run seconds — EXCEPT on NPT stage 2/3 rows,
+    where the device sends the responder's ID card number in flag1."""
+    try:
+        for f in ("flag4", "flag5", "flag7"):
+            if int(getattr(log, f, 0) or 0) >= 2:
+                return 0
+        return int(log.flag1 or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _last_flag3_one_log(logs: list) -> SewingLog | None:
     """Most recent flag3=1 + all-other-flags-0 row (machin + user + day in_time)."""
     for i in range(len(logs) - 1, -1, -1):
@@ -843,14 +855,20 @@ def enrich_rfid_shift_times(
             session_end = last_from or session_start
     else:
         session_start = first_from
-        formatted_in = "—"
+        # No clean login punch (flag3=1, other flags 0) — show the first
+        # scan of the day as the IN time instead of a dash.
+        formatted_in = (
+            _iso_to_local_ampm(logs[0].logged_at.isoformat())
+            if logs[0].logged_at
+            else "—"
+        )
         if latest_flag3 != 0 and on_date == today:
             session_end = _sewing_now_wall(now)
         else:
             session_end = last_from or first_from
 
     wr_sec = _duration_seconds(session_start, session_end)
-    mrt_total = sum(int(log.flag1 or 0) for log in logs)
+    mrt_total = sum(_flag1_runtime(log) for log in logs)
     # Defect / production now come from machin_production_count (QC data):
     # production = SUM(bundle_qty) - (SUM(defect) + SUM(reject)).
     from mbm_automation.bundle_barcode import machine_day_counts
