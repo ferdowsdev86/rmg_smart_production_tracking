@@ -82,16 +82,16 @@ function StepperStat({ label, value, tone, onMinus, onPlus, minusDisabled, plusD
  *  Fully CONTROLLED: all edits (defect/reject/checkQty/selected defect types)
  *  live in the parent per part barcode, so switching parts keeps selections
  *  until Save or Cancel. */
-function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundleDefect = 0, bundleReject = 0 }) {
+function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundleView = null }) {
   const defect = edit.defect;
   const reject = edit.reject;
   const sel = edit.sel || {};
 
   const chipTotal = Object.values(sel).reduce((a, v) => a + v, 0);
 
-  // Bundle qty fully passed already (for this date/style/order/po/color/size
-  // group) — no more defect / reject can be recorded.
-  const fullyPassed = (totalPass || 0) >= part.qty;
+  // Bundle qty fully passed already (through any part) — no more
+  // defect / reject can be recorded.
+  const fullyPassed = (bundleView?.pass ?? totalPass ?? 0) >= part.qty;
   function blockIfFullyPassed() {
     if (fullyPassed) {
       toast.error("Already total qty was pass");
@@ -127,7 +127,11 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
   // (not yet repaired) or rejected can not pass.
   const previewPass = Math.max(
     0,
-    Math.min(qcCheck - newDefect - newReject, part.qty - (totalPass || 0) - defect - reject),
+    Math.min(
+      qcCheck - newDefect - newReject,
+      (bundleView?.remaining ?? part.qty - (totalPass || 0)) - newDefect - newReject,
+      part.qty - (totalPass || 0) - defect - reject,
+    ),
   );
   const dirty = defect !== part.defect || reject !== part.reject || chipTotal > 0;
 
@@ -185,10 +189,10 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
           minusDisabled={qcCheck <= Math.max(1, newDefect + newReject) || saving}
           plusDisabled={qcCheck >= remaining || saving}
         />
-        <MiniStat label="Total Pass" value={totalPass || 0} tone="sky" />
+        <MiniStat label="Total Pass" value={bundleView?.pass ?? totalPass ?? 0} tone="sky" />
         <StepperStat
           label="Defect"
-          value={defect}
+          value={bundleView ? bundleView.defect : defect}
           tone="amber"
           onMinus={() => onEdit({ defect: Math.max(0, defect - 1) })}
           onPlus={() => {
@@ -197,11 +201,11 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
           }}
           minusDisabled={defect <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
-          sub={bundleDefect > 0 ? `Bundle total ${bundleDefect}` : null}
+          sub={bundleView ? `${part.part_name}: ${defect}` : null}
         />
         <StepperStat
           label="Reject"
-          value={reject}
+          value={bundleView ? bundleView.reject : reject}
           tone="red"
           onMinus={() => onEdit({ reject: Math.max(0, reject - 1) })}
           onPlus={() => {
@@ -210,7 +214,7 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
           }}
           minusDisabled={reject <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
-          sub={bundleReject > 0 ? `Bundle total ${bundleReject}` : null}
+          sub={bundleView ? `${part.part_name}: ${reject}` : null}
         />
         <MiniStat label="Pass" value={previewPass} tone="green" />
       </div>
@@ -389,13 +393,35 @@ export default function QualityCheck() {
   }, [bundle?.barcode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const partTotalPass = (p) => p.total_pass ?? bundle?.total_pass ?? 0;
+  // Bundle-level pass: the garments of this bundle checked through ANY part.
+  const bundlePass = bundle?.parts?.length
+    ? Math.max(0, ...bundle.parts.map((p) => p.total_pass ?? 0), bundle.total_pass ?? 0)
+    : 0;
+  const bundleRemaining = Math.max(0, (bundle?.qty || 0) - bundlePass);
   const getEdit = (p) => ({
     sel: {},
     defect: p.defect,
     reject: p.reject,
-    checkQty: Math.max(0, p.qty - partTotalPass(p)),
+    checkQty: Math.min(Math.max(0, p.qty - partTotalPass(p)), bundleRemaining),
     ...(edits[p.barcode] || {}),
   });
+  // Effective defect for a part: the manual counter when the user touched
+  // it (raise or repair), otherwise the selected defect-type pcs count as
+  // the defective garments automatically.
+  const effDefect = (p, e) => {
+    if (e.defect !== p.defect) return e.defect;
+    const selPcs = Object.values(e.sel || {}).reduce((a, v) => a + v, 0);
+    return selPcs > 0 ? p.defect + selPcs : e.defect;
+  };
+  // Bundle-wide state for the stat boxes (saved + unsaved edits).
+  const bundleView = bundle?.parts?.length
+    ? {
+        pass: bundlePass,
+        remaining: bundleRemaining,
+        defect: bundle.parts.reduce((a, p) => a + effDefect(p, getEdit(p)), 0),
+        reject: bundle.parts.reduce((a, p) => a + getEdit(p).reject, 0),
+      }
+    : null;
   const updateEdit = (p, patch) =>
     setEdits((prev) => ({ ...prev, [p.barcode]: { ...getEdit(p), ...patch } }));
   const partChanged = (p) => {
@@ -433,14 +459,6 @@ export default function QualityCheck() {
       toast.error("Select a part first.");
       return;
     }
-    // Effective defect for a part: the manual counter when the user touched
-    // it (raise or repair), otherwise the selected defect-type pcs count as
-    // the defective garments automatically.
-    const effDefect = (p, e) => {
-      if (e.defect !== p.defect) return e.defect;
-      const selPcs = Object.values(e.sel || {}).reduce((a, v) => a + v, 0);
-      return selPcs > 0 ? p.defect + selPcs : e.defect;
-    };
     // validate every part before saving anything
     for (const p of targets) {
       const e = getEdit(p);
@@ -756,8 +774,7 @@ export default function QualityCheck() {
               edit={getEdit(selectedPart)}
               onEdit={(patch) => updateEdit(selectedPart, patch)}
               saving={saving}
-              bundleDefect={(bundle.parts || []).reduce((a, p) => a + (p.defect || 0), 0)}
-              bundleReject={(bundle.parts || []).reduce((a, p) => a + (p.reject || 0), 0)}
+              bundleView={bundleView}
             />
           ) : null}
         </>
