@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BadgeCheck,
   Barcode,
@@ -74,25 +73,16 @@ function StepperStat({ label, value, tone, onMinus, onPlus, minusDisabled, plusD
   );
 }
 
-/** Detail panel for the selected part: stats, +/- defect & reject, machine info. */
-function PartDetail({ part, totalPass, defectTypes, onSaved, saveSlot }) {
-  // Absolute totals being edited (start from what is stored in DB).
-  const [defect, setDefect] = useState(part.defect);
-  const [reject, setReject] = useState(part.reject);
-  // Selected defect types for THIS save: { sl: qty }
-  const [sel, setSel] = useState({});
-
-  useEffect(() => {
-    setDefect(part.defect);
-    setReject(part.reject);
-    setSel({});
-  }, [part.barcode, part.defect, part.reject]);
+/** Detail panel for the selected part: stats, +/- defect & reject, machine info.
+ *  Fully CONTROLLED: all edits (defect/reject/checkQty/selected defect types)
+ *  live in the parent per part barcode, so switching parts keeps selections
+ *  until Save or Cancel. */
+function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving }) {
+  const defect = edit.defect;
+  const reject = edit.reject;
+  const sel = edit.sel || {};
 
   const chipTotal = Object.values(sel).reduce((a, v) => a + v, 0);
-  // Selected defect types drive the DEFECT counter (existing + newly found).
-  useEffect(() => {
-    if (chipTotal > 0) setDefect(part.defect + chipTotal);
-  }, [chipTotal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bundle qty fully passed already (for this date/style/order/po/color/size
   // group) — no more defect / reject can be recorded.
@@ -107,29 +97,21 @@ function PartDetail({ part, totalPass, defectTypes, onSaved, saveSlot }) {
 
   function toggleChip(sl) {
     if (!sel[sl] && blockIfFullyPassed()) return;
-    setSel((prev) => {
-      const next = { ...prev };
-      if (next[sl]) delete next[sl];
-      else next[sl] = 1;
-      return next;
-    });
+    const next = { ...sel };
+    if (next[sl]) delete next[sl];
+    else next[sl] = 1;
+    onEdit({ sel: next });
   }
   function chipQty(sl, delta) {
     if (delta > 0 && blockIfFullyPassed()) return;
-    setSel((prev) => {
-      const next = { ...prev, [sl]: Math.max(1, (prev[sl] || 1) + delta) };
-      return next;
-    });
+    onEdit({ sel: { ...sel, [sl]: Math.max(1, (sel[sl] || 1) + delta) } });
   }
 
   // Remaining pieces of this part not yet passed today
   const remaining = Math.max(0, part.qty - (totalPass || 0));
   // QC Check = pieces inspected in THIS save (partial check allowed):
   // default all remaining; −/+ to check e.g. 10 of 20 now, the rest later.
-  const [checkQty, setCheckQty] = useState(remaining);
-  useEffect(() => {
-    setCheckQty(remaining);
-  }, [part.barcode, remaining]);
+  const checkQty = edit.checkQty ?? remaining;
   // NEW defects / rejects found in this save (counters are part totals)
   const newDefect = Math.max(0, defect - part.defect);
   const newReject = Math.max(0, reject - part.reject);
@@ -142,37 +124,7 @@ function PartDetail({ part, totalPass, defectTypes, onSaved, saveSlot }) {
     0,
     Math.min(qcCheck - newDefect - newReject, part.qty - (totalPass || 0) - defect - reject),
   );
-  const dirty = defect !== part.defect || reject !== part.reject;
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      api
-        .post("/automation/quality/check/", {
-          barcode: part.barcode,
-          defect,
-          reject,
-          mode: "set",
-          check_qty: qcCheck,
-          defects: Object.entries(sel).map(([sl, qty]) => ({ sl: Number(sl), qty })),
-        })
-        .then((r) => r.data),
-    onSuccess: (data) => {
-      if (data.qc_saved === false) {
-        toast.error(data.warning || "QC history was NOT saved — please save again.");
-        return;
-      }
-      toast.success(
-        `${part.part_name}: checked ${data.check_qty ?? qcCheck}, pass ${data.pass_qty}, total pass ${data.total_pass}, defect ${data.defect}, reject ${data.reject}`,
-      );
-      setSel({});
-      onSaved();
-    },
-    onError: (err) => {
-      toast.error(
-        err?.response?.data?.detail || err.message || "Failed to save quality check",
-      );
-    },
-  });
+  const dirty = defect !== part.defect || reject !== part.reject || chipTotal > 0;
 
   return (
     <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-emerald-300">
@@ -223,35 +175,35 @@ function PartDetail({ part, totalPass, defectTypes, onSaved, saveSlot }) {
           label="QC Check"
           value={qcCheck}
           tone="slate"
-          onMinus={() => setCheckQty((v) => Math.max(Math.max(1, newDefect + newReject), v - 1))}
-          onPlus={() => setCheckQty((v) => Math.min(remaining, v + 1))}
-          minusDisabled={qcCheck <= Math.max(1, newDefect + newReject) || saveMutation.isPending}
-          plusDisabled={qcCheck >= remaining || saveMutation.isPending}
+          onMinus={() => onEdit({ checkQty: Math.max(Math.max(1, newDefect + newReject), qcCheck - 1) })}
+          onPlus={() => onEdit({ checkQty: Math.min(remaining, qcCheck + 1) })}
+          minusDisabled={qcCheck <= Math.max(1, newDefect + newReject) || saving}
+          plusDisabled={qcCheck >= remaining || saving}
         />
         <MiniStat label="Total Pass" value={totalPass || 0} tone="sky" />
         <StepperStat
           label="Defect"
           value={defect}
           tone="amber"
-          onMinus={() => setDefect((v) => Math.max(0, v - 1))}
+          onMinus={() => onEdit({ defect: Math.max(0, defect - 1) })}
           onPlus={() => {
             if (blockIfFullyPassed()) return;
-            setDefect((v) => v + 1);
+            onEdit({ defect: defect + 1 });
           }}
-          minusDisabled={defect <= 0 || saveMutation.isPending}
-          plusDisabled={newDefect + newReject >= qcCheck || saveMutation.isPending}
+          minusDisabled={defect <= 0 || saving}
+          plusDisabled={newDefect + newReject >= qcCheck || saving}
         />
         <StepperStat
           label="Reject"
           value={reject}
           tone="red"
-          onMinus={() => setReject((v) => Math.max(0, v - 1))}
+          onMinus={() => onEdit({ reject: Math.max(0, reject - 1) })}
           onPlus={() => {
             if (blockIfFullyPassed()) return;
-            setReject((v) => v + 1);
+            onEdit({ reject: reject + 1 });
           }}
-          minusDisabled={reject <= 0 || saveMutation.isPending}
-          plusDisabled={newDefect + newReject >= qcCheck || saveMutation.isPending}
+          minusDisabled={reject <= 0 || saving}
+          plusDisabled={newDefect + newReject >= qcCheck || saving}
         />
         <MiniStat label="Pass" value={previewPass} tone="green" />
       </div>
@@ -308,57 +260,36 @@ function PartDetail({ part, totalPass, defectTypes, onSaved, saveSlot }) {
         </div>
         {chipTotal > 0 ? (
           <div className="mt-1.5 text-[11px] font-semibold text-amber-600">
-            {Object.keys(sel).length} defect type · {chipTotal} pcs — DEFECT counter updated automatically
+            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — set the DEFECT
+            (garments) count with the +/− above; selections are kept when you open another part.
+          </div>
+        ) : null}
+        {overLimit ? (
+          <div className="mt-1.5 text-[11px] font-bold text-rose-600">
+            Defect + reject cannot exceed QC check qty.
           </div>
         ) : null}
       </div>
 
-      {(() => {
-        const saveUi = (
-          <div className={saveSlot ? "flex flex-wrap items-center gap-2" : "mt-4 flex flex-wrap items-center gap-3"}>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        {dirty ? (
+          <>
+            <span className="text-xs font-medium text-amber-600">
+              Unsaved — defect {part.defect} → {defect}, reject {part.reject} → {reject}
+              {chipTotal > 0 ? ` · ${chipTotal} defect pcs selected` : ""}
+            </span>
             <button
               type="button"
-              onClick={() => {
-                if (overLimit) {
-                  toast.error("Defect + reject cannot exceed QC check qty.");
-                  return;
-                }
-                if (defect > part.defect && chipTotal === 0) {
-                  toast.error("Please select WHICH defect was found (defect type) before saving.");
-                  return;
-                }
-                saveMutation.mutate();
-              }}
-              disabled={overLimit || saveMutation.isPending}
-              className="inline-flex min-h-[46px] items-center gap-2 rounded-xl bg-emerald-600 px-7 py-2.5 text-[15px] font-semibold text-white hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => onEdit({ defect: part.defect, reject: part.reject, sel: {}, checkQty: remaining })}
+              className="text-xs text-slate-500 underline hover:text-slate-700"
             >
-              <CheckCircle2 className="h-4 w-4" />
-              {saveMutation.isPending ? "Saving…" : dirty ? "Save" : "Mark QC Pass"}
+              Reset this part
             </button>
-            {dirty ? (
-              <>
-                <span className="text-xs font-medium text-amber-600">
-                  Unsaved changes — defect {part.defect} → {defect}, reject {part.reject} →{" "}
-                  {reject}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDefect(part.defect);
-                    setReject(part.reject);
-                  }}
-                  className="text-xs text-slate-500 underline hover:text-slate-700"
-                >
-                  Reset
-                </button>
-              </>
-            ) : (
-              <span className="text-xs text-slate-400">Saved</span>
-            )}
-          </div>
-        );
-        return saveSlot ? createPortal(saveUi, saveSlot) : saveUi;
-      })()}
+          </>
+        ) : (
+          <span className="text-xs text-slate-400">No changes on this part</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -371,8 +302,10 @@ export default function QualityCheck() {
   const [barcode, setBarcode] = useState("");
   const [openPart, setOpenPart] = useState(null);
   const [cameraOpen, setCameraOpen] = useState(false);
-  // save button portal target: right side of the parts row in the bundle card
-  const [saveSlot, setSaveSlot] = useState(null);
+  // Per-part unsaved edits: { [partBarcode]: {sel, defect, reject, checkQty} }.
+  // Kept across part switches until Save or Cancel.
+  const [edits, setEdits] = useState({});
+  const [saving, setSaving] = useState(false);
   // null = unknown yet; false = no usable camera (device w/o camera, blocked,
   // or insecure origin) -> barcode-gun / manual typing mode only.
   const [cameraOk, setCameraOk] = useState(null);
@@ -444,13 +377,107 @@ export default function QualityCheck() {
       const own = bundle.parts?.find((p) => p.barcode === bundle.barcode);
       setOpenPart(own?.barcode ?? bundle.parts?.[0]?.barcode ?? null);
     }
+    setEdits({});
   }, [bundle?.barcode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const partTotalPass = (p) => p.total_pass ?? bundle?.total_pass ?? 0;
+  const getEdit = (p) => ({
+    sel: {},
+    defect: p.defect,
+    reject: p.reject,
+    checkQty: Math.max(0, p.qty - partTotalPass(p)),
+    ...(edits[p.barcode] || {}),
+  });
+  const updateEdit = (p, patch) =>
+    setEdits((prev) => ({ ...prev, [p.barcode]: { ...getEdit(p), ...patch } }));
+  const partChanged = (p) => {
+    const e = edits[p.barcode];
+    if (!e) return false;
+    return (
+      Object.keys(e.sel || {}).length > 0 ||
+      (e.defect ?? p.defect) !== p.defect ||
+      (e.reject ?? p.reject) !== p.reject
+    );
+  };
+
+  // Running total of selected (unsaved) defects across ALL parts — the badge
+  // next to Mark QC Pass.
+  const selSummary = Object.values(edits).reduce(
+    (acc, e) => {
+      const sel = e.sel || {};
+      const pcs = Object.values(sel).reduce((a, v) => a + v, 0);
+      acc.types += Object.keys(sel).length;
+      acc.pcs += pcs;
+      if (pcs > 0) acc.parts += 1;
+      return acc;
+    },
+    { types: 0, pcs: 0, parts: 0 },
+  );
+  const hasEdits = (bundle?.parts || []).some((p) => partChanged(p));
+
+  async function saveAll() {
+    const parts = bundle?.parts || [];
+    const changed = parts.filter(partChanged);
+    const selectedPartNow = parts.find((p) => p.barcode === openPart) || null;
+    // nothing edited → plain Mark QC Pass on the open part (pass the checked qty)
+    const targets = changed.length ? changed : selectedPartNow ? [selectedPartNow] : [];
+    if (!targets.length) {
+      toast.error("Select a part first.");
+      return;
+    }
+    // validate every part before saving anything
+    for (const p of targets) {
+      const e = getEdit(p);
+      const remaining = Math.max(0, p.qty - partTotalPass(p));
+      const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
+      const newDefect = Math.max(0, e.defect - p.defect);
+      const newReject = Math.max(0, e.reject - p.reject);
+      if (newDefect + newReject > qcCheck) {
+        toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
+        return;
+      }
+      if (newDefect > 0 && Object.keys(e.sel || {}).length === 0) {
+        toast.error(`${p.part_name}: select WHICH defect was found (defect type).`);
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      for (const p of targets) {
+        const e = getEdit(p);
+        const remaining = Math.max(0, p.qty - partTotalPass(p));
+        const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
+        const { data } = await api.post("/automation/quality/check/", {
+          barcode: p.barcode,
+          defect: e.defect,
+          reject: e.reject,
+          mode: "set",
+          check_qty: qcCheck,
+          defects: Object.entries(e.sel || {}).map(([sl, qty]) => ({ sl: Number(sl), qty })),
+        });
+        if (data.qc_saved === false) {
+          toast.error(`${p.part_name}: ${data.warning || "QC history was NOT saved — please save again."}`);
+          return;
+        }
+        toast.success(
+          `${p.part_name}: checked ${data.check_qty ?? qcCheck}, pass ${data.pass_qty}, defect ${data.defect}, reject ${data.reject}`,
+        );
+      }
+      setEdits({});
+      resetForNextScan();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || err.message || "Failed to save quality check");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function resetForNextScan() {
     // After a save: clear everything and get ready for the next bundle scan.
     setBarcode("");
     setBarcodeInput("");
     setOpenPart(null);
+    setEdits({});
     queryClient.removeQueries({ queryKey: ["quality-bundle"] });
     queryClient.invalidateQueries({ queryKey: ["qc-line-totals"] });
     // Live TV / floor boards (same browser + cross-tab via WS on server ping).
@@ -634,6 +661,7 @@ export default function QualityCheck() {
             <div className="flex flex-wrap items-center gap-2">
               {(bundle.parts || []).map((part) => {
                 const active = openPart === part.barcode;
+                const selPcs = Object.values(edits[part.barcode]?.sel || {}).reduce((a, v) => a + v, 0);
                 const base =
                   "inline-flex min-h-[46px] items-center gap-2 rounded-xl px-4 py-2.5 text-[14px] font-semibold uppercase transition active:scale-95";
                 const cls = active
@@ -649,6 +677,11 @@ export default function QualityCheck() {
                   >
                     <Puzzle className="h-3.5 w-3.5" />
                     {part.part_name}
+                    {selPcs > 0 ? (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`} title="Selected defects (unsaved)">
+                        ✎{selPcs}
+                      </span>
+                    ) : null}
                     {part.defect + part.reject > 0 ? (
                       <span
                         className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
@@ -663,8 +696,36 @@ export default function QualityCheck() {
                   </button>
                 );
               })}
-              {/* Save / Mark QC Pass lands here (portal from PartDetail) */}
-              <div ref={setSaveSlot} className="ml-auto flex items-center" />
+              {/* Save all parts' selections + running defect badge */}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {selSummary.pcs > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-xl bg-amber-100 px-3 py-2 text-[13px] font-bold text-amber-800 ring-1 ring-amber-300 tabular-nums">
+                    {selSummary.pcs} defect
+                    <span className="font-semibold text-amber-600">
+                      · {selSummary.types} type · {selSummary.parts} part
+                    </span>
+                  </span>
+                ) : null}
+                {hasEdits ? (
+                  <button
+                    type="button"
+                    onClick={() => setEdits({})}
+                    disabled={saving}
+                    className="inline-flex min-h-[46px] items-center rounded-xl bg-slate-100 px-4 py-2.5 text-[14px] font-semibold text-slate-600 hover:bg-slate-200 active:scale-95 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={saveAll}
+                  disabled={saving}
+                  className="inline-flex min-h-[46px] items-center gap-2 rounded-xl bg-emerald-600 px-7 py-2.5 text-[15px] font-semibold text-white hover:bg-emerald-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {saving ? "Saving…" : hasEdits ? "Save" : "Mark QC Pass"}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -672,10 +733,11 @@ export default function QualityCheck() {
           {selectedPart ? (
             <PartDetail
               part={selectedPart}
-              totalPass={selectedPart.total_pass ?? bundle?.total_pass ?? 0}
+              totalPass={partTotalPass(selectedPart)}
               defectTypes={defectTypesQ.data || []}
-              onSaved={resetForNextScan}
-              saveSlot={saveSlot}
+              edit={getEdit(selectedPart)}
+              onEdit={(patch) => updateEdit(selectedPart, patch)}
+              saving={saving}
             />
           ) : null}
         </>
