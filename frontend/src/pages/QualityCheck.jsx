@@ -664,6 +664,51 @@ export default function QualityCheck() {
               <InfoField label="Size · Bundle Qty" value={`${bundle.size_no ?? "—"} · ${bundle.qty} pcs`} />
             </div>
 
+            {/* bundle-level QC history: obvious on re-scan, whichever part is open */}
+            {(() => {
+              const parts = bundle.parts || [];
+              const tDef = parts.reduce((a, p) => a + (p.defect || 0), 0);
+              const tRej = parts.reduce((a, p) => a + (p.reject || 0), 0);
+              const checkedParts = parts.filter((p) => p.checked || p.defect > 0 || p.reject > 0);
+              if (!checkedParts.length) return null;
+              const bad = tDef + tRej > 0;
+              return (
+                <div
+                  className={`mt-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold ring-1 ${
+                    bad ? "bg-amber-50 text-amber-800 ring-amber-300" : "bg-sky-50 text-sky-800 ring-sky-200"
+                  }`}
+                >
+                  <span className="text-base">{bad ? "⚠️" : "ℹ️"}</span>
+                  <span>
+                    This bundle was checked before{bad ? " — " : "."}
+                    {bad ? (
+                      <>
+                        total <b className="text-amber-700">Defect {tDef}</b> ·{" "}
+                        <b className="text-rose-700">Reject {tRej}</b>
+                      </>
+                    ) : null}
+                  </span>
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {checkedParts.map((p) => (
+                      <button
+                        key={p.barcode}
+                        type="button"
+                        onClick={() => setOpenPart(p.barcode)}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 transition hover:scale-105 ${
+                          p.defect + p.reject > 0
+                            ? "bg-amber-500 text-white ring-amber-600"
+                            : "bg-white text-sky-700 ring-sky-300"
+                        }`}
+                        title={`${p.part_name}: defect ${p.defect} · reject ${p.reject} — tap to open`}
+                      >
+                        {p.part_name} D{p.defect}/R{p.reject}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              );
+            })()}
+
             {/* parts live inside the same card — serial row, big touch targets */}
             <div className="mb-2 mt-4 border-t border-slate-100 pt-3 text-sm font-semibold text-slate-700">
               Parts ({bundle.parts?.length || 0}) — touch a part to record quality
