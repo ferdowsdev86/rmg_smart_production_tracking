@@ -269,9 +269,8 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
         </div>
         {chipTotal > 0 ? (
           <div className="mt-1.5 text-[11px] font-semibold text-amber-600">
-            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — saved as{" "}
-            {defect !== part.defect ? defect - part.defect : chipTotal} defective garment(s); adjust with the DEFECT
-            +/− above if one garment carries several defects. Selections are kept when you open another part.
+            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — set the defective
+            garment count manually with the DEFECT +/− above. Selections are kept when you open another part.
           </div>
         ) : null}
         {overLimit ? (
@@ -403,20 +402,13 @@ export default function QualityCheck() {
     checkQty: Math.min(Math.max(0, p.qty - partTotalPass(p)), bundleRemaining),
     ...(edits[p.barcode] || {}),
   });
-  // Effective defect for a part: the manual counter when the user touched
-  // it (raise or repair), otherwise the selected defect-type pcs count as
-  // the defective garments automatically.
-  const effDefect = (p, e) => {
-    if (e.defect !== p.defect) return e.defect;
-    const selPcs = Object.values(e.sel || {}).reduce((a, v) => a + v, 0);
-    return selPcs > 0 ? p.defect + selPcs : e.defect;
-  };
-  // Bundle-wide state for the stat boxes (saved + unsaved edits).
+  // Bundle-wide state for the stat boxes (saved + the user's MANUAL edits;
+  // selecting defect types never changes these counters).
   const bundleView = bundle?.parts?.length
     ? {
         pass: bundlePass,
         remaining: bundleRemaining,
-        defect: bundle.parts.reduce((a, p) => a + effDefect(p, getEdit(p)), 0),
+        defect: bundle.parts.reduce((a, p) => a + getEdit(p).defect, 0),
         reject: bundle.parts.reduce((a, p) => a + getEdit(p).reject, 0),
       }
     : null;
@@ -462,8 +454,7 @@ export default function QualityCheck() {
       const e = getEdit(p);
       const remaining = Math.max(0, p.qty - partTotalPass(p));
       const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
-      const defect = effDefect(p, e);
-      const newDefect = Math.max(0, defect - p.defect);
+      const newDefect = Math.max(0, e.defect - p.defect);
       const newReject = Math.max(0, e.reject - p.reject);
       if (newDefect + newReject > qcCheck) {
         toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
@@ -482,7 +473,7 @@ export default function QualityCheck() {
         const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
         const { data } = await api.post("/automation/quality/check/", {
           barcode: p.barcode,
-          defect: effDefect(p, e),
+          defect: e.defect,
           reject: e.reject,
           mode: "set",
           check_qty: qcCheck,
