@@ -497,7 +497,10 @@ class FloorOverviewView(APIView):
         # --- realtime line efficiency (SMV based) -------------------------------
         # efficiency% = earned minutes / available minutes × 100
         #   earned    = Σ (style-wise QC output × style SMV from mr_style)
-        #   available = manpower (active stations) × worked minutes so far
+        #   available = Σ active machines' punch minutes (counting starts
+        #               at 08:00, 1h break deducted per machine); falls
+        #               back to fixed manpower × wall-clock when punches
+        #               are unavailable
         efficiency = {"pct": 0.0, "smv": 0.0, "earned_min": 0, "avail_min": 0,
                       "manpower": 0, "worked_min": 0}
         try:
@@ -533,29 +536,41 @@ class FloorOverviewView(APIView):
             earned = sum(
                 qty * smv_map.get(stl, avg_smv) for stl, qty in style_out.items()
             )
-            # Line manpower for efficiency — fixed 45 (override via env
-            # LINE_EFFICIENCY_MANPOWER when the line size changes).
-            from core.env import config as _cfg
-
+            # Available minutes from actual machine punches (per-machine
+            # counting starts at 08:00, 1h break deducted).
+            avail = 0
+            manpower = 0
+            worked = 0
             try:
-                manpower = int(_cfg("LINE_EFFICIENCY_MANPOWER", default="45"))
-            except (TypeError, ValueError):
-                manpower = 45
-            day_hours = (
-                max((float(t.get("hours") or 0) for t in targets.values()), default=0)
-                if targets else 0
-            )
-            day_min = int((day_hours or 10) * 60)
-            now_dhk = _tz.now().astimezone(ZoneInfo("Asia/Dhaka"))
-            if str(on_date) == now_dhk.date().isoformat():
-                start_dt = now_dhk.replace(
-                    hour=start_hour, minute=0, second=0, microsecond=0
+                _pm, _pt, _persons, _machine_hours = staff_punch_summary(on_date)
+                avail = int(sum(v["actual_seconds"] for v in _machine_hours.values()) // 60)
+                manpower = len(_persons)
+                worked = int(avail / len(_machine_hours)) if _machine_hours else 0
+            except Exception:
+                pass
+            if avail <= 0:
+                # fallback: fixed manpower × wall-clock worked minutes
+                from core.env import config as _cfg
+
+                try:
+                    manpower = int(_cfg("LINE_EFFICIENCY_MANPOWER", default="45"))
+                except (TypeError, ValueError):
+                    manpower = 45
+                day_hours = (
+                    max((float(t.get("hours") or 0) for t in targets.values()), default=0)
+                    if targets else 0
                 )
-                worked = int((now_dhk - start_dt).total_seconds() // 60)
-                worked = max(0, min(worked, day_min))
-            else:
-                worked = day_min
-            avail = manpower * worked
+                day_min = int((day_hours or 10) * 60)
+                now_dhk = _tz.now().astimezone(ZoneInfo("Asia/Dhaka"))
+                if str(on_date) == now_dhk.date().isoformat():
+                    start_dt = now_dhk.replace(
+                        hour=start_hour, minute=0, second=0, microsecond=0
+                    )
+                    worked = int((now_dhk - start_dt).total_seconds() // 60)
+                    worked = max(0, min(worked, day_min))
+                else:
+                    worked = day_min
+                avail = manpower * worked
             efficiency = {
                 "pct": round(earned / avail * 100, 1) if avail > 0 else 0.0,
                 "smv": round(avg_smv, 2),
@@ -943,6 +958,11 @@ def _hm_display(seconds: int) -> str:
 
 STAFF_BREAK_SECONDS = 3600  # 1 hour lunch break per staff
 
+# floor_overview polls every 8s and also needs punches now — cache the
+# (fairly heavy) summary for a short while per date.
+_STAFF_CACHE: dict[str, tuple[float, tuple]] = {}
+_STAFF_CACHE_TTL_SECONDS = 30.0
+
 
 def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str, dict]]:
     """Per-machine SEWING-staff punch rows + line totals for one day.
@@ -956,6 +976,13 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
     latest out, one 1h break — so manpower matches the real headcount.
     `machine_hours` aggregates per MACHINE the same way (first in to
     last out on that machine, one 1h break) for machine-hour sums."""
+    import time as _time
+
+    cache_key = on_date.isoformat()
+    hit = _STAFF_CACHE.get(cache_key)
+    if hit and (_time.time() - hit[0]) < _STAFF_CACHE_TTL_SECONDS:
+        return hit[1]
+
     all_machines = sorted(
         set(LineLayout.objects.all().values_list("machin_no", flat=True))
     )
@@ -1071,7 +1098,11 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
 
     machine_hours: dict[str, dict] = {}
     for mid, m in machine_raw.items():
-        work = max(0, int((m["end_dt"] - m["in_dt"]).total_seconds()))
+        # counting starts at 08:00 — a punch before 8 counts from 8, a
+        # later punch counts from when that machine actually started
+        eight = m["in_dt"].replace(hour=8, minute=0, second=0, microsecond=0)
+        start_dt = max(m["in_dt"], eight)
+        work = max(0, int((m["end_dt"] - start_dt).total_seconds()))
         brk = min(work, STAFF_BREAK_SECONDS)
         machine_hours[mid] = {
             "still_in": m["still_in"],
@@ -1091,7 +1122,11 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
         "actual_seconds": actual,
         "actual_display": _hm_display(actual),
     }
-    return machines, totals, persons, machine_hours
+    result = (machines, totals, persons, machine_hours)
+    if len(_STAFF_CACHE) > 40:
+        _STAFF_CACHE.clear()
+    _STAFF_CACHE[cache_key] = (_time.time(), result)
+    return result
 
 
 class FloorOverviewStaffView(APIView):
