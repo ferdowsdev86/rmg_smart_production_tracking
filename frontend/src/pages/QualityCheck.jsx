@@ -260,8 +260,9 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving }) {
         </div>
         {chipTotal > 0 ? (
           <div className="mt-1.5 text-[11px] font-semibold text-amber-600">
-            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — set the DEFECT
-            (garments) count with the +/− above; selections are kept when you open another part.
+            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — saved as{" "}
+            {defect !== part.defect ? defect - part.defect : chipTotal} defective garment(s); adjust with the DEFECT
+            +/− above if one garment carries several defects. Selections are kept when you open another part.
           </div>
         ) : null}
         {overLimit ? (
@@ -425,12 +426,21 @@ export default function QualityCheck() {
       toast.error("Select a part first.");
       return;
     }
+    // Effective defect for a part: the manual counter when the user touched
+    // it (raise or repair), otherwise the selected defect-type pcs count as
+    // the defective garments automatically.
+    const effDefect = (p, e) => {
+      if (e.defect !== p.defect) return e.defect;
+      const selPcs = Object.values(e.sel || {}).reduce((a, v) => a + v, 0);
+      return selPcs > 0 ? p.defect + selPcs : e.defect;
+    };
     // validate every part before saving anything
     for (const p of targets) {
       const e = getEdit(p);
       const remaining = Math.max(0, p.qty - partTotalPass(p));
       const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
-      const newDefect = Math.max(0, e.defect - p.defect);
+      const defect = effDefect(p, e);
+      const newDefect = Math.max(0, defect - p.defect);
       const newReject = Math.max(0, e.reject - p.reject);
       if (newDefect + newReject > qcCheck) {
         toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
@@ -438,10 +448,6 @@ export default function QualityCheck() {
       }
       if (newDefect > 0 && Object.keys(e.sel || {}).length === 0) {
         toast.error(`${p.part_name}: select WHICH defect was found (defect type).`);
-        return;
-      }
-      if (newDefect === 0 && Object.keys(e.sel || {}).length > 0) {
-        toast.error(`${p.part_name}: set the DEFECT (garments) count with +/− before saving.`);
         return;
       }
     }
@@ -453,7 +459,7 @@ export default function QualityCheck() {
         const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
         const { data } = await api.post("/automation/quality/check/", {
           barcode: p.barcode,
-          defect: e.defect,
+          defect: effDefect(p, e),
           reject: e.reject,
           mode: "set",
           check_qty: qcCheck,
