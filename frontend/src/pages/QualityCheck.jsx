@@ -201,7 +201,6 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
           }}
           minusDisabled={defect <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
-          sub={bundleView ? `${part.part_name}: ${defect}` : null}
         />
         <StepperStat
           label="Reject"
@@ -214,7 +213,6 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
           }}
           minusDisabled={reject <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
-          sub={bundleView ? `${part.part_name}: ${reject}` : null}
         />
         <MiniStat label="Pass" value={previewPass} tone="green" />
       </div>
