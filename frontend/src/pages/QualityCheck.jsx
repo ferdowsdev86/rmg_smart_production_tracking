@@ -127,17 +127,19 @@ function PartDetail({
   // QC Check = pieces inspected in THIS save (partial check allowed):
   // default all remaining; −/+ to check e.g. 10 of 20 now, the rest later.
   const checkQty = edit.checkQty ?? remaining;
-  // NEW defects / rejects of this save session (ONE count for every part)
-  const newDefect = sessionD;
-  const newReject = sessionR;
+  // NEW defects / rejects of this save session (ONE count for every part;
+  // negative = repair, bringing a saved defect/reject back to pass)
+  const newDefect = Math.max(0, sessionD);
+  const newReject = Math.max(0, sessionR);
   const qcCheck = Math.min(checkQty, remaining);
   const overLimit = newDefect + newReject > qcCheck;
+  // PASS = remaining to check minus the bundle's CURRENT defect/reject —
+  // a defective piece passes only after its defect is brought back to 0.
+  const curDefect = bundleView ? bundleView.defect : newDefect;
+  const curReject = bundleView ? bundleView.reject : newReject;
   const previewPass = Math.max(
     0,
-    Math.min(
-      qcCheck - newDefect - newReject,
-      (bundleView?.remaining ?? remaining) - newDefect - newReject,
-    ),
+    Math.min(qcCheck, bundleView?.remaining ?? remaining) - curDefect - curReject,
   );
   const dirty = chipTotal > 0;
 
@@ -200,24 +202,24 @@ function PartDetail({
           label="Defect"
           value={bundleView ? bundleView.defect : sessionD}
           tone="amber"
-          onMinus={() => setSessionD?.((v) => Math.max(0, v - 1))}
+          onMinus={() => setSessionD?.((v) => v - 1)}
           onPlus={() => {
             if (blockIfFullyPassed()) return;
             setSessionD?.((v) => v + 1);
           }}
-          minusDisabled={sessionD <= 0 || saving}
+          minusDisabled={curDefect <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
         />
         <StepperStat
           label="Reject"
           value={bundleView ? bundleView.reject : sessionR}
           tone="red"
-          onMinus={() => setSessionR?.((v) => Math.max(0, v - 1))}
+          onMinus={() => setSessionR?.((v) => v - 1)}
           onPlus={() => {
             if (blockIfFullyPassed()) return;
             setSessionR?.((v) => v + 1);
           }}
-          minusDisabled={sessionR <= 0 || saving}
+          minusDisabled={curReject <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
         />
         <MiniStat label="Pass" value={previewPass} tone="green" />
@@ -419,8 +421,8 @@ export default function QualityCheck() {
     ? {
         pass: bundlePass,
         remaining: bundleRemaining,
-        defect: Math.max(0, ...bundle.parts.map((p) => p.defect || 0)) + sessionD,
-        reject: Math.max(0, ...bundle.parts.map((p) => p.reject || 0)) + sessionR,
+        defect: Math.max(0, Math.max(0, ...bundle.parts.map((p) => p.defect || 0)) + sessionD),
+        reject: Math.max(0, Math.max(0, ...bundle.parts.map((p) => p.reject || 0)) + sessionR),
       }
     : null;
   const updateEdit = (p, patch) =>
@@ -440,15 +442,24 @@ export default function QualityCheck() {
     },
     { types: 0, pcs: 0, parts: 0 },
   );
-  const hasEdits = (bundle?.parts || []).some((p) => partChanged(p)) || sessionD > 0 || sessionR > 0;
+  const hasEdits = (bundle?.parts || []).some((p) => partChanged(p)) || sessionD !== 0 || sessionR !== 0;
 
   async function saveAll() {
     const parts = bundle?.parts || [];
     const changed = parts.filter(partChanged);
     const selectedPartNow = parts.find((p) => p.barcode === openPart) || null;
     // the session Defect/Reject count applies to EVERY part with selected
-    // defect types; with no selections it falls back to the open part
-    const targets = changed.length ? changed : selectedPartNow ? [selectedPartNow] : [];
+    // defect types; a repair (negative count) with no selections goes to the
+    // parts that hold the saved defect/reject; otherwise the open part
+    let targets = changed;
+    if (!targets.length) {
+      if (sessionD < 0 || sessionR < 0) {
+        targets = parts.filter(
+          (p) => (sessionD < 0 && (p.defect || 0) > 0) || (sessionR < 0 && (p.reject || 0) > 0),
+        );
+      }
+      if (!targets.length && selectedPartNow) targets = [selectedPartNow];
+    }
     if (!targets.length) {
       toast.error("Select a part first.");
       return;
@@ -458,7 +469,7 @@ export default function QualityCheck() {
       const e = getEdit(p);
       const remaining = Math.max(0, p.qty - partTotalPass(p));
       const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
-      if (sessionD + sessionR > qcCheck) {
+      if (Math.max(0, sessionD) + Math.max(0, sessionR) > qcCheck) {
         toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
         return;
       }
@@ -475,8 +486,8 @@ export default function QualityCheck() {
         const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
         const { data } = await api.post("/automation/quality/check/", {
           barcode: p.barcode,
-          defect: (p.defect || 0) + sessionD,
-          reject: (p.reject || 0) + sessionR,
+          defect: Math.max(0, (p.defect || 0) + sessionD),
+          reject: Math.max(0, (p.reject || 0) + sessionR),
           mode: "set",
           check_qty: qcCheck,
           defects: Object.entries(e.sel || {}).map(([sl, qty]) => ({ sl: Number(sl), qty })),
