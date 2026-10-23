@@ -44,7 +44,7 @@ export default function Reports() {
       <tr style="background:#334155;color:#fff">
         <th>Date</th><th>Floor</th><th>Line</th><th>Style</th><th>&nbsp;</th><th>Sewing SMV</th>
         <th>Plan MP</th><th>MO</th><th>HP</th><th>IM</th><th>Total MP</th><th>Plan Target</th><th>Plan WH</th><th>Plan Man Hour</th><th>Plan SAH</th>
-        <th>Present MP</th><th>Active M/C</th><th>Day Man Hour</th><th>Output (Pcs)</th><th>Day SAH</th><th>Efficiency %</th><th>Target Ach %</th>
+        <th>Present MP</th><th>Active W/S</th><th>Day Man Hour</th><th>Output (Pcs)</th><th>Day SAH</th><th>Efficiency %</th><th>Target Ach %</th>
       </tr>`;
     const body = rows
       .map(
@@ -163,7 +163,7 @@ export default function Reports() {
                 <th className={th}>Man Hour</th>
                 <th className={th}>SAH</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Present MP</th>
-                <th className={`${th} bg-emerald-50 text-emerald-700`}>Active M/C</th>
+                <th className={`${th} bg-emerald-50 text-emerald-700`}>Active W/S</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Man Hour</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Output</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Day SAH</th>
@@ -231,8 +231,8 @@ export default function Reports() {
         </div>
 
         <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
-          Present MP = distinct SEWING staff punched · Man Hour = Σ active machines&apos; working hours
-          (first in → last out per machine, 1h break deducted) · Output = QC pass qty ·
+          Present MP = distinct SEWING staff punched · Man Hour = Σ active workstations&apos; working hours
+          (first in → last out per workstation, 1h break deducted) · Output = QC pass qty ·
           Day SAH = Σ output × SMV ÷ 60 · Efficiency % = Day SAH ÷ Day Man Hour
         </div>
       </div>
