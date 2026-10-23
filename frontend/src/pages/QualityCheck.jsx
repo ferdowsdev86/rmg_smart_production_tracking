@@ -82,9 +82,19 @@ function StepperStat({ label, value, tone, onMinus, onPlus, minusDisabled, plusD
  *  Fully CONTROLLED: all edits (defect/reject/checkQty/selected defect types)
  *  live in the parent per part barcode, so switching parts keeps selections
  *  until Save or Cancel. */
-function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundleView = null }) {
-  const defect = edit.defect;
-  const reject = edit.reject;
+function PartDetail({
+  part,
+  totalPass,
+  defectTypes,
+  edit,
+  onEdit,
+  saving,
+  bundleView = null,
+  sessionD = 0,
+  sessionR = 0,
+  setSessionD,
+  setSessionR,
+}) {
   const sel = edit.sel || {};
 
   const chipTotal = Object.values(sel).reduce((a, v) => a + v, 0);
@@ -117,23 +127,19 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
   // QC Check = pieces inspected in THIS save (partial check allowed):
   // default all remaining; −/+ to check e.g. 10 of 20 now, the rest later.
   const checkQty = edit.checkQty ?? remaining;
-  // NEW defects / rejects found in this save (counters are part totals)
-  const newDefect = Math.max(0, defect - part.defect);
-  const newReject = Math.max(0, reject - part.reject);
+  // NEW defects / rejects of this save session (ONE count for every part)
+  const newDefect = sessionD;
+  const newReject = sessionR;
   const qcCheck = Math.min(checkQty, remaining);
   const overLimit = newDefect + newReject > qcCheck;
-  // pass this save = checked now - new defects - new rejects, but never more
-  // than bundle qty - (total pass + defect + reject): pieces still defective
-  // (not yet repaired) or rejected can not pass.
   const previewPass = Math.max(
     0,
     Math.min(
       qcCheck - newDefect - newReject,
-      (bundleView?.remaining ?? part.qty - (totalPass || 0)) - newDefect - newReject,
-      part.qty - (totalPass || 0) - defect - reject,
+      (bundleView?.remaining ?? remaining) - newDefect - newReject,
     ),
   );
-  const dirty = defect !== part.defect || reject !== part.reject || chipTotal > 0;
+  const dirty = chipTotal > 0;
 
   return (
     <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-emerald-300">
@@ -192,26 +198,26 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
         <MiniStat label="Total Pass" value={bundleView?.pass ?? totalPass ?? 0} tone="sky" />
         <StepperStat
           label="Defect"
-          value={bundleView ? bundleView.defect : defect}
+          value={bundleView ? bundleView.defect : sessionD}
           tone="amber"
-          onMinus={() => onEdit({ defect: Math.max(0, defect - 1) })}
+          onMinus={() => setSessionD?.((v) => Math.max(0, v - 1))}
           onPlus={() => {
             if (blockIfFullyPassed()) return;
-            onEdit({ defect: defect + 1 });
+            setSessionD?.((v) => v + 1);
           }}
-          minusDisabled={defect <= 0 || saving}
+          minusDisabled={sessionD <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
         />
         <StepperStat
           label="Reject"
-          value={bundleView ? bundleView.reject : reject}
+          value={bundleView ? bundleView.reject : sessionR}
           tone="red"
-          onMinus={() => onEdit({ reject: Math.max(0, reject - 1) })}
+          onMinus={() => setSessionR?.((v) => Math.max(0, v - 1))}
           onPlus={() => {
             if (blockIfFullyPassed()) return;
-            onEdit({ reject: reject + 1 });
+            setSessionR?.((v) => v + 1);
           }}
-          minusDisabled={reject <= 0 || saving}
+          minusDisabled={sessionR <= 0 || saving}
           plusDisabled={newDefect + newReject >= qcCheck || saving}
         />
         <MiniStat label="Pass" value={previewPass} tone="green" />
@@ -269,8 +275,8 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
         </div>
         {chipTotal > 0 ? (
           <div className="mt-1.5 text-[11px] font-semibold text-amber-600">
-            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — set the defective
-            garment count manually with the DEFECT +/− above. Selections are kept when you open another part.
+            {Object.keys(sel).length} defect type · {chipTotal} pcs selected on {part.part_name} — the DEFECT / REJECT
+            counts above apply to EVERY selected part on save. Selections are kept when you open another part.
           </div>
         ) : null}
         {overLimit ? (
@@ -284,19 +290,18 @@ function PartDetail({ part, totalPass, defectTypes, edit, onEdit, saving, bundle
         {dirty ? (
           <>
             <span className="text-xs font-medium text-amber-600">
-              Unsaved — defect {part.defect} → {defect}, reject {part.reject} → {reject}
-              {chipTotal > 0 ? ` · ${chipTotal} defect pcs selected` : ""}
+              Unsaved — {chipTotal} defect pcs selected on {part.part_name}
             </span>
             <button
               type="button"
-              onClick={() => onEdit({ defect: part.defect, reject: part.reject, sel: {}, checkQty: remaining })}
+              onClick={() => onEdit({ sel: {}, checkQty: remaining })}
               className="text-xs text-slate-500 underline hover:text-slate-700"
             >
               Reset this part
             </button>
           </>
         ) : (
-          <span className="text-xs text-slate-400">No changes on this part</span>
+          <span className="text-xs text-slate-400">No defect type selected on this part</span>
         )}
       </div>
     </div>
@@ -311,9 +316,12 @@ export default function QualityCheck() {
   const [barcode, setBarcode] = useState("");
   const [openPart, setOpenPart] = useState(null);
   const [cameraOpen, setCameraOpen] = useState(false);
-  // Per-part unsaved edits: { [partBarcode]: {sel, defect, reject, checkQty} }.
-  // Kept across part switches until Save or Cancel.
+  // Per-part unsaved edits: { [partBarcode]: {sel, checkQty} } — kept across
+  // part switches until Save or Cancel. The Defect/Reject counts are ONE
+  // session-level pair applied to every part with selections on save.
   const [edits, setEdits] = useState({});
+  const [sessionD, setSessionD] = useState(0);
+  const [sessionR, setSessionR] = useState(0);
   const [saving, setSaving] = useState(false);
   // null = unknown yet; false = no usable camera (device w/o camera, blocked,
   // or insecure origin) -> barcode-gun / manual typing mode only.
@@ -387,6 +395,8 @@ export default function QualityCheck() {
       setOpenPart(own?.barcode ?? bundle.parts?.[0]?.barcode ?? null);
     }
     setEdits({});
+    setSessionD(0);
+    setSessionR(0);
   }, [bundle?.barcode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const partTotalPass = (p) => p.total_pass ?? bundle?.total_pass ?? 0;
@@ -397,32 +407,22 @@ export default function QualityCheck() {
   const bundleRemaining = Math.max(0, (bundle?.qty || 0) - bundlePass);
   const getEdit = (p) => ({
     sel: {},
-    defect: p.defect,
-    reject: p.reject,
     checkQty: Math.min(Math.max(0, p.qty - partTotalPass(p)), bundleRemaining),
     ...(edits[p.barcode] || {}),
   });
-  // Bundle-wide state for the stat boxes (saved + the user's MANUAL edits;
-  // selecting defect types never changes these counters).
+  // ONE manual Defect / Reject count for this save session — it applies to
+  // EVERY part that has defect types selected (selecting types never adds).
   const bundleView = bundle?.parts?.length
     ? {
         pass: bundlePass,
         remaining: bundleRemaining,
-        defect: bundle.parts.reduce((a, p) => a + getEdit(p).defect, 0),
-        reject: bundle.parts.reduce((a, p) => a + getEdit(p).reject, 0),
+        defect: bundle.parts.reduce((a, p) => a + (p.defect || 0), 0) + sessionD,
+        reject: bundle.parts.reduce((a, p) => a + (p.reject || 0), 0) + sessionR,
       }
     : null;
   const updateEdit = (p, patch) =>
     setEdits((prev) => ({ ...prev, [p.barcode]: { ...getEdit(p), ...patch } }));
-  const partChanged = (p) => {
-    const e = edits[p.barcode];
-    if (!e) return false;
-    return (
-      Object.keys(e.sel || {}).length > 0 ||
-      (e.defect ?? p.defect) !== p.defect ||
-      (e.reject ?? p.reject) !== p.reject
-    );
-  };
+  const partChanged = (p) => Object.keys(edits[p.barcode]?.sel || {}).length > 0;
 
   // Running total of selected (unsaved) defects across ALL parts — the badge
   // next to Mark QC Pass.
@@ -437,13 +437,14 @@ export default function QualityCheck() {
     },
     { types: 0, pcs: 0, parts: 0 },
   );
-  const hasEdits = (bundle?.parts || []).some((p) => partChanged(p));
+  const hasEdits = (bundle?.parts || []).some((p) => partChanged(p)) || sessionD > 0 || sessionR > 0;
 
   async function saveAll() {
     const parts = bundle?.parts || [];
     const changed = parts.filter(partChanged);
     const selectedPartNow = parts.find((p) => p.barcode === openPart) || null;
-    // nothing edited → plain Mark QC Pass on the open part (pass the checked qty)
+    // the session Defect/Reject count applies to EVERY part with selected
+    // defect types; with no selections it falls back to the open part
     const targets = changed.length ? changed : selectedPartNow ? [selectedPartNow] : [];
     if (!targets.length) {
       toast.error("Select a part first.");
@@ -454,13 +455,11 @@ export default function QualityCheck() {
       const e = getEdit(p);
       const remaining = Math.max(0, p.qty - partTotalPass(p));
       const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
-      const newDefect = Math.max(0, e.defect - p.defect);
-      const newReject = Math.max(0, e.reject - p.reject);
-      if (newDefect + newReject > qcCheck) {
+      if (sessionD + sessionR > qcCheck) {
         toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
         return;
       }
-      if (newDefect > 0 && Object.keys(e.sel || {}).length === 0) {
+      if (sessionD > 0 && Object.keys(e.sel || {}).length === 0) {
         toast.error(`${p.part_name}: select WHICH defect was found (defect type).`);
         return;
       }
@@ -473,8 +472,8 @@ export default function QualityCheck() {
         const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
         const { data } = await api.post("/automation/quality/check/", {
           barcode: p.barcode,
-          defect: e.defect,
-          reject: e.reject,
+          defect: (p.defect || 0) + sessionD,
+          reject: (p.reject || 0) + sessionR,
           mode: "set",
           check_qty: qcCheck,
           defects: Object.entries(e.sel || {}).map(([sl, qty]) => ({ sl: Number(sl), qty })),
@@ -487,7 +486,6 @@ export default function QualityCheck() {
           `${p.part_name}: checked ${data.check_qty ?? qcCheck}, pass ${data.pass_qty}, defect ${data.defect}, reject ${data.reject}`,
         );
       }
-      setEdits({});
       resetForNextScan();
     } catch (err) {
       toast.error(err?.response?.data?.detail || err.message || "Failed to save quality check");
@@ -502,6 +500,8 @@ export default function QualityCheck() {
     setBarcodeInput("");
     setOpenPart(null);
     setEdits({});
+    setSessionD(0);
+    setSessionR(0);
     queryClient.removeQueries({ queryKey: ["quality-bundle"] });
     queryClient.invalidateQueries({ queryKey: ["qc-line-totals"] });
     // Live TV / floor boards (same browser + cross-tab via WS on server ping).
@@ -734,7 +734,11 @@ export default function QualityCheck() {
                 {hasEdits ? (
                   <button
                     type="button"
-                    onClick={() => setEdits({})}
+                    onClick={() => {
+                      setEdits({});
+                      setSessionD(0);
+                      setSessionR(0);
+                    }}
                     disabled={saving}
                     className="inline-flex min-h-[46px] items-center rounded-xl bg-slate-100 px-4 py-2.5 text-[14px] font-semibold text-slate-600 hover:bg-slate-200 active:scale-95 disabled:opacity-50"
                   >
@@ -764,6 +768,10 @@ export default function QualityCheck() {
               onEdit={(patch) => updateEdit(selectedPart, patch)}
               saving={saving}
               bundleView={bundleView}
+              sessionD={sessionD}
+              sessionR={sessionR}
+              setSessionD={setSessionD}
+              setSessionR={setSessionR}
             />
           ) : null}
         </>
