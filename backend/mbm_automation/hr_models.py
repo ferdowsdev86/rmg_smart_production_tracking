@@ -12,6 +12,7 @@ class HrAsBasicInfo(models.Model):
     as_pic = models.CharField(max_length=255, blank=True, null=True)
     as_rfid_code = models.CharField(max_length=20, blank=True, null=True)
     worker_id = models.IntegerField(blank=True, null=True)
+    new_department_id = models.IntegerField(blank=True, null=True)
     deleted_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:

@@ -64,6 +64,7 @@ def _profile_from_row(row: HrAsBasicInfo) -> dict[str, Any]:
         "hr_associate_id": row.associate_id or "",
         "hr_temp_id": row.temp_id or "",
         "hr_designation_id": row.as_designation_id,
+        "hr_new_department_id": row.new_department_id,
     }
 
 
@@ -99,14 +100,14 @@ def _lookup_hr_profile_uncached(uid: str) -> dict[str, Any] | None:
             | Q(as_rfid_code=uid)
             | Q(as_rfid_code__startswith=uid)
         )
-        .only("as_name", "as_pic", "associate_id", "temp_id", "as_rfid_code", "as_designation_id")
+        .only("as_name", "as_pic", "associate_id", "temp_id", "as_rfid_code", "as_designation_id", "new_department_id")
         .first()
     )
 
     if row is None and uid.isdigit():
         row = (
             qs.filter(worker_id=int(uid))
-            .only("as_name", "as_pic", "associate_id", "temp_id", "as_rfid_code", "as_designation_id")
+            .only("as_name", "as_pic", "associate_id", "temp_id", "as_rfid_code", "as_designation_id", "new_department_id")
             .first()
         )
 
@@ -114,6 +115,35 @@ def _lookup_hr_profile_uncached(uid: str) -> dict[str, Any] | None:
         return None
 
     return _profile_from_row(row)
+
+
+_SEWING_DEPT_CACHE: tuple[float, frozenset] | None = None
+
+
+def sewing_department_ids() -> frozenset:
+    """hr_department_new ids whose name contains SEWING (cached 10 min).
+
+    Empty set means the lookup failed — callers should then skip the
+    department filter rather than hide everyone."""
+    global _SEWING_DEPT_CACHE
+    import time as _time
+
+    if _SEWING_DEPT_CACHE and (_time.time() - _SEWING_DEPT_CACHE[0]) < _HR_PROFILE_TTL_SECONDS:
+        return _SEWING_DEPT_CACHE[1]
+
+    from django.db import connections
+
+    try:
+        with connections[HR_DB].cursor() as cursor:
+            cursor.execute(
+                "SELECT hr_department_id FROM hr_department_new "
+                "WHERE deleted_at IS NULL AND UPPER(hr_department_name) LIKE '%%SEWING%%'"
+            )
+            ids = frozenset(int(r[0]) for r in cursor.fetchall())
+    except Exception:
+        ids = frozenset()
+    _SEWING_DEPT_CACHE = (_time.time(), ids)
+    return ids
 
 
 def lookup_hr_profiles(machin_users: list[str]) -> dict[str, dict[str, Any]]:

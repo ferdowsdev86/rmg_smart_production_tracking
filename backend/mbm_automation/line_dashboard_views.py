@@ -21,6 +21,7 @@ from rest_framework.views import APIView
 from floors.models import DayLineTarget
 from mbm_automation.bundle_barcode import bulk_qty_for_barcodes, production_qty_for_flag9
 from mbm_automation.day_sew_target_views import _calc_hour_target, _parse_on_date
+from mbm_automation.hr_lookup import lookup_hr_profile, sewing_department_ids
 from mbm_automation.models import LineLayout, SewingLog
 from mbm_automation.sewing_analysis import (
     _is_flag3_only_login_log,
@@ -947,11 +948,14 @@ class FloorOverviewStaffView(APIView):
     machin_user who logged into a machine that day gets a row — so two
     operators on the same machine show up as two entries:
 
+    - only staff whose HR department is SEWING (hr_department_new via
+      new_department_id); others — QC, IE, mechanics — are left out
     - in_time  = first clean login punch (flag3=1, every other flag 0),
                  falling back to the user's first scan of the day
     - out_time = the user's last row when they have logged out (latest
                  flag3=0) or the date is in the past; "—" while still in
     - working  = out (or now) − in; actual = working − 1h lunch break
+    - sessions of 2 minutes or less are skipped (misread cards)
 
     totals = line-wide sums: staff count, working, break (1h per staff,
     clamped to that person's working time) and actual working hours.
@@ -966,6 +970,7 @@ class FloorOverviewStaffView(APIView):
         )
         now = timezone.now()
         today = _sewing_now_wall(now).date()
+        sewing_depts = sewing_department_ids()
 
         logs_by_machine: dict[int, list] = defaultdict(list)
         qs = SewingLog.objects.filter(
@@ -992,6 +997,10 @@ class FloorOverviewStaffView(APIView):
 
             rows: list[dict] = []
             for uid in order:
+                profile = lookup_hr_profile(uid)
+                dept = profile.get("hr_new_department_id") if profile else None
+                if sewing_depts and dept not in sewing_depts:
+                    continue
                 ulogs = by_user[uid]
                 login_log = next((l for l in ulogs if _is_flag3_only_login_log(l)), None)
                 first = login_log or ulogs[0]
@@ -1014,15 +1023,14 @@ class FloorOverviewStaffView(APIView):
                     )
 
                 work = max(0, int((end_dt - in_dt).total_seconds()))
-                # skip ghost punches: a closed session under 2 minutes is a
-                # misread card, not a real shift
-                if not still_in and work < 120:
+                # only sessions over 2 minutes count as a real shift
+                if work <= 120:
                     continue
                 brk = min(work, self.BREAK_SECONDS)
                 rows.append(
                     {
                         "operator_id": uid,
-                        "name": _operator_display_name(uid),
+                        "name": (profile or {}).get("operator_name") or _operator_display_name(uid),
                         "in_time": in_display,
                         "out_time": out_display,
                         "still_in": still_in,
