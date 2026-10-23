@@ -448,18 +448,15 @@ export default function QualityCheck() {
     const parts = bundle?.parts || [];
     const changed = parts.filter(partChanged);
     const selectedPartNow = parts.find((p) => p.barcode === openPart) || null;
-    // the session Defect/Reject count applies to EVERY part with selected
-    // defect types; a repair (negative count) with no selections goes to the
-    // parts that hold the saved defect/reject; otherwise the open part
-    let targets = changed;
-    if (!targets.length) {
-      if (sessionD < 0 || sessionR < 0) {
-        targets = parts.filter(
-          (p) => (sessionD < 0 && (p.defect || 0) > 0) || (sessionR < 0 && (p.reject || 0) > 0),
-        );
-      }
-      if (!targets.length && selectedPartNow) targets = [selectedPartNow];
-    }
+    // targets: every part with selected defect types, PLUS — when the count
+    // was reduced (repair) — every part that holds the saved defect/reject,
+    // even without a selection; otherwise the open part.
+    const targetMap = new Map();
+    for (const p of changed) targetMap.set(p.barcode, p);
+    if (sessionD < 0) for (const p of parts) if ((p.defect || 0) > 0) targetMap.set(p.barcode, p);
+    if (sessionR < 0) for (const p of parts) if ((p.reject || 0) > 0) targetMap.set(p.barcode, p);
+    let targets = [...targetMap.values()];
+    if (!targets.length && selectedPartNow) targets = [selectedPartNow];
     if (!targets.length) {
       toast.error("Select a part first.");
       return;
