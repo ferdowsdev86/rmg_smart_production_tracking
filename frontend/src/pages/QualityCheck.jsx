@@ -412,12 +412,15 @@ export default function QualityCheck() {
   });
   // ONE manual Defect / Reject count for this save session — it applies to
   // EVERY part that has defect types selected (selecting types never adds).
+  // Saved garment counts: every save writes the SAME session count to each
+  // selected part, so the bundle's defective garments = the MAX over parts
+  // (a sum would double-count one garment recorded on two parts).
   const bundleView = bundle?.parts?.length
     ? {
         pass: bundlePass,
         remaining: bundleRemaining,
-        defect: bundle.parts.reduce((a, p) => a + (p.defect || 0), 0) + sessionD,
-        reject: bundle.parts.reduce((a, p) => a + (p.reject || 0), 0) + sessionR,
+        defect: Math.max(0, ...bundle.parts.map((p) => p.defect || 0)) + sessionD,
+        reject: Math.max(0, ...bundle.parts.map((p) => p.reject || 0)) + sessionR,
       }
     : null;
   const updateEdit = (p, patch) =>
