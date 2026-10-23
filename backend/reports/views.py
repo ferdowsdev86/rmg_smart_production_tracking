@@ -373,7 +373,7 @@ class DayEfficiencyReportView(APIView):
                         floor_names[int(lid)] = str(fname or "").strip()
                     cursor.execute(
                         f"SELECT id, hr_line_id, production_date, target_qty, hour, "
-                        f"number_worker, mo, helper, iron_man "
+                        f"number_worker, mo, helper, iron_man, hr_unit_id "
                         f"FROM pt_sewing_daily_line_targets "
                         f"WHERE hr_line_id IN ({marks}) AND production_date BETWEEN %s AND %s "
                         f"ORDER BY id",
@@ -381,7 +381,7 @@ class DayEfficiencyReportView(APIView):
                     )
                     pt_ids: list[int] = []
                     pt_key: dict[int, tuple[int, str]] = {}
-                    for pid, lid, pdate, tqty, hrs, worker, mo, hp, im in cursor.fetchall():
+                    for pid, lid, pdate, tqty, hrs, worker, mo, hp, im, unit_id in cursor.fetchall():
                         key = (int(lid), str(pdate))
                         plans[key] = {
                             "pt_id": pid,
@@ -391,6 +391,7 @@ class DayEfficiencyReportView(APIView):
                             "mo": int(mo or 0),
                             "hp": int(hp or 0),
                             "im": int(im or 0),
+                            "unit_id": unit_id,
                             "styles": [],
                         }
                         pt_ids.append(pid)
@@ -431,27 +432,15 @@ class DayEfficiencyReportView(APIView):
                 stl = (stl or "").strip()
                 day_line[stl] = day_line.get(stl, 0) + int(pq or 0)
 
-        # --- SMV per style (plan styles + output styles, one query) ---------
+        # --- SMV per style (unit-wise, same value the ERP shows) -------------
+        from mbm_automation.line_dashboard_views import smv_for_styles
+
         all_styles = sorted(
             {s for p in plans.values() for s in p["styles"]}
             | {s for d in out_by_day_line.values() for s in d if s}
         )
-        smv_map: dict[str, float] = {}
-        if all_styles:
-            try:
-                with connections["cuttingedge"].cursor() as cursor:
-                    smarks = ", ".join(["%s"] * len(all_styles))
-                    cursor.execute(
-                        f"SELECT stl_no, COALESCE(production_smv, stl_smv, 0) "
-                        f"FROM mr_style WHERE stl_no IN ({smarks})",
-                        all_styles,
-                    )
-                    for stl, smv in cursor.fetchall():
-                        v = float(smv or 0)
-                        if v > 0:
-                            smv_map[str(stl).strip()] = v
-            except Exception:
-                pass
+        unit_id = next((p.get("unit_id") for p in plans.values() if p.get("unit_id")), None)
+        smv_map = smv_for_styles(all_styles, unit_id)
 
         # --- rows: one per day per line --------------------------------------
         rows: list[dict] = []

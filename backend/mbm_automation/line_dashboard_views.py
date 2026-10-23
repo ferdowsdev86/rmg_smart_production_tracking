@@ -37,6 +37,83 @@ from mbm_automation.sewing_analysis import (
 )
 
 
+_UNIT_KEY_CACHE: dict[int, str] = {}
+
+
+def _unit_smv_key(unit_id) -> str:
+    """hr_unit short name lowercased — the key inside mr_style's
+    unit_wise_* JSON columns (e.g. 1→mbm, 2→ceil, 3→aql)."""
+    try:
+        unit_id = int(unit_id or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not unit_id:
+        return ""
+    if unit_id in _UNIT_KEY_CACHE:
+        return _UNIT_KEY_CACHE[unit_id]
+    key = ""
+    try:
+        with connections["cuttingedge"].cursor() as cursor:
+            cursor.execute(
+                "SELECT hr_unit_short_name FROM hr_unit WHERE hr_unit_id = %s",
+                [unit_id],
+            )
+            row = cursor.fetchone()
+            key = (row[0] or "").strip().lower() if row else ""
+    except Exception:
+        key = ""
+    _UNIT_KEY_CACHE[unit_id] = key
+    return key
+
+
+def smv_for_styles(style_names, unit_id=None) -> dict[str, float]:
+    """Production SMV per style from mr_style, the way the ERP shows it:
+    the UNIT-WISE production SMV (unit_wise_production_smv JSON keyed by
+    hr_unit short name) wins over the plain production_smv column, then
+    unit-wise style SMV, then stl_smv. Rows with 0 never overwrite a
+    positive value from a duplicate stl_no row."""
+    import json as _json
+
+    names = sorted({str(s).strip() for s in style_names if s and str(s).strip()})
+    if not names:
+        return {}
+    key = _unit_smv_key(unit_id)
+    out: dict[str, float] = {}
+    try:
+        with connections["cuttingedge"].cursor() as cursor:
+            marks = ", ".join(["%s"] * len(names))
+            cursor.execute(
+                f"SELECT stl_no, production_smv, stl_smv, "
+                f"unit_wise_production_smv, unit_wise_stl_smv "
+                f"FROM mr_style WHERE stl_no IN ({marks})",
+                names,
+            )
+            for stl, psmv, ssmv, uw_p, uw_s in cursor.fetchall():
+                stl = str(stl or "").strip()
+
+                def _unit_val(raw):
+                    if not key or not raw:
+                        return 0.0
+                    try:
+                        return float(_json.loads(raw).get(key) or 0)
+                    except (ValueError, TypeError, AttributeError):
+                        return 0.0
+
+                for v in (
+                    _unit_val(uw_p),
+                    float(psmv or 0),
+                    _unit_val(uw_s),
+                    float(ssmv or 0),
+                ):
+                    if v > 0:
+                        if out.get(stl, 0) <= 0:
+                            out[stl] = v
+                        break
+    except Exception:
+        pass
+    return out
+
+
 def _hour_in_break(hour: int, break_st, break_end) -> bool:
     if break_st is None or break_end is None or break_st == break_end:
         return False
@@ -200,19 +277,20 @@ class FloorOverviewView(APIView):
                 )
                 names = {int(r[0]): str(r[1] or "").strip() for r in cursor.fetchall()}
                 cursor.execute(
-                    f"SELECT p.hr_line_id, p.id, p.target_qty, p.hour, p.layout_id "
+                    f"SELECT p.hr_line_id, p.id, p.target_qty, p.hour, p.layout_id, p.hr_unit_id "
                     f"FROM pt_sewing_daily_line_targets p "
                     f"WHERE p.hr_line_id IN ({marks}) AND p.production_date = %s "
                     f"ORDER BY p.id",
                     [*line_ids, on_date],
                 )
                 pt_ids = []
-                for hr_id, pt_id, tqty, thour, lay in cursor.fetchall():
+                for hr_id, pt_id, tqty, thour, lay, unit_id in cursor.fetchall():
                     targets[int(hr_id)] = {
                         "pt_id": pt_id,
                         "target_qty": int(tqty or 0),
                         "hours": float(thour or 0),
                         "layout_id": lay,
+                        "unit_id": unit_id,
                         "styles": [],
                     }
                     pt_ids.append(pt_id)
@@ -523,20 +601,11 @@ class FloorOverviewView(APIView):
                 )
                 for stl, pq in cursor.fetchall():
                     style_out[(stl or "").strip()] += int(pq or 0)
-            smv_map: dict[str, float] = {}
             style_names = [s for s in style_out if s]
-            if style_names:
-                with connections["cuttingedge"].cursor() as cursor:
-                    smarks = ", ".join(["%s"] * len(style_names))
-                    cursor.execute(
-                        f"SELECT stl_no, COALESCE(production_smv, stl_smv, 0) "
-                        f"FROM mr_style WHERE stl_no IN ({smarks})",
-                        style_names,
-                    )
-                    for stl, smv in cursor.fetchall():
-                        v = float(smv or 0)
-                        if v > 0:
-                            smv_map[str(stl).strip()] = v
+            line_unit_id = next(
+                (t.get("unit_id") for t in targets.values() if t.get("unit_id")), None
+            )
+            smv_map = smv_for_styles(style_names, line_unit_id)
             avg_smv = (sum(smv_map.values()) / len(smv_map)) if smv_map else 0.0
             earned = sum(
                 qty * smv_map.get(stl, avg_smv) for stl, qty in style_out.items()
