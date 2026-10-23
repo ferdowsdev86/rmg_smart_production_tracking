@@ -136,12 +136,18 @@ export default function MachineHeatmap({ D, shift, mach, staff, compactDefault =
         {staff?.totals?.staff ? (
           <span className="ml-auto inline-flex flex-wrap items-center gap-x-2 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-900 ring-1 ring-indigo-100 tabular-nums">
             <span>Staff {staff.totals.staff}</span>
+            {staff.totals.machines ? (
+              <>
+                <span className="text-indigo-300">|</span>
+                <span>Active W/S {staff.totals.machines}</span>
+              </>
+            ) : null}
             <span className="text-indigo-300">|</span>
             <span>Working {staff.totals.working_display}</span>
             <span className="text-indigo-300">|</span>
-            <span>Break {staff.totals.break_display} (1h/staff)</span>
+            <span>Break {staff.totals.break_display} (1h/W-S)</span>
             <span className="text-indigo-300">|</span>
-            <span className="font-bold">Actual {staff.totals.actual_display}</span>
+            <span className="font-bold">Man Hour {staff.totals.actual_display}</span>
           </span>
         ) : null}
       </div>

@@ -1079,8 +1079,6 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             machines[str(mid)] = rows
 
     persons: dict[str, dict] = {}
-    total_work = 0
-    total_break = 0
     for uid, p in person_raw.items():
         work = max(0, int((p["end_dt"] - p["in_dt"]).total_seconds()))
         brk = min(work, STAFF_BREAK_SECONDS)
@@ -1093,8 +1091,6 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             "actual_seconds": work - brk,
             "actual_display": _hm_display(work - brk),
         }
-        total_work += work
-        total_break += brk
 
     machine_hours: dict[str, dict] = {}
     for mid, m in machine_raw.items():
@@ -1112,15 +1108,19 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             "actual_display": _hm_display(work - brk),
         }
 
-    actual = max(0, total_work - total_break)
+    # line totals are MACHINE based so every surface (heatmap summary,
+    # efficiency gauge, day efficiency report) shows the same man hours
+    m_work = sum(v["working_seconds"] for v in machine_hours.values())
+    m_actual = sum(v["actual_seconds"] for v in machine_hours.values())
     totals = {
         "staff": len(persons),
-        "working_seconds": total_work,
-        "working_display": _hm_display(total_work),
-        "break_seconds": total_break,
-        "break_display": _hm_display(total_break),
-        "actual_seconds": actual,
-        "actual_display": _hm_display(actual),
+        "machines": len(machine_hours),
+        "working_seconds": m_work,
+        "working_display": _hm_display(m_work),
+        "break_seconds": m_work - m_actual,
+        "break_display": _hm_display(m_work - m_actual),
+        "actual_seconds": m_actual,
+        "actual_display": _hm_display(m_actual),
     }
     result = (machines, totals, persons, machine_hours)
     if len(_STAFF_CACHE) > 40:
