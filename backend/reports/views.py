@@ -302,3 +302,237 @@ class QualityReportView(APIView):
                 "totals": totals,
             }
         )
+
+
+class DayEfficiencyReportView(APIView):
+    """GET /api/reports/day_efficiency/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+
+    Day efficiency report — one row per tracked line per day, modelled on
+    the ERP "Day efficiency report" sheet but built from this system's
+    own data:
+
+      plan   — pt_sewing_daily_line_targets (worker / MO / HP / IM,
+               working hours, target qty) + daily_line_style_targets
+               styles; SMV from mr_style (production_smv, stl_smv)
+      actual — SEWING-department staff punches (present manpower and
+               man hours with the 1h lunch break deducted) and QC output
+               (day_qc_diffect pass qty, style-wise)
+
+      Plan man hour  = plan worker × plan WH
+      Plan SAH       = plan target × SMV / 60
+      Day SAH        = Σ style output × style SMV / 60
+      Efficiency %   = Day SAH / day man hours
+      Achievement %  = output / plan target
+    """
+
+    MAX_DAYS = 31
+
+    def get(self, request):
+        from datetime import timedelta
+
+        from django.db import connections
+
+        from mbm_automation.line_dashboard_views import staff_punch_summary
+        from mbm_automation.models import LineLayout
+
+        today = get_today()
+        d_from = _parse_date(request.query_params.get("date_from"), today)
+        d_to = _parse_date(request.query_params.get("date_to"), d_from)
+        if d_to < d_from:
+            d_from, d_to = d_to, d_from
+        if (d_to - d_from).days >= self.MAX_DAYS:
+            d_to = d_from + timedelta(days=self.MAX_DAYS - 1)
+        days = [d_from + timedelta(days=i) for i in range((d_to - d_from).days + 1)]
+
+        layout = list(LineLayout.objects.all().values("floor", "line_no", "machin_no"))
+        line_keys = sorted({(r["floor"], r["line_no"]) for r in layout})
+        machines_by_line = {
+            key: {str(r["machin_no"]) for r in layout if (r["floor"], r["line_no"]) == key}
+            for key in line_keys
+        }
+        line_ids = sorted({ln for _, ln in line_keys})
+
+        # --- ERP: line/floor names + plan rows + plan styles ----------------
+        line_names: dict[int, str] = {}
+        floor_names: dict[int, str] = {}
+        plans: dict[tuple[int, str], dict] = {}
+        if line_ids:
+            try:
+                with connections["cuttingedge"].cursor() as cursor:
+                    marks = ", ".join(["%s"] * len(line_ids))
+                    cursor.execute(
+                        f"SELECT l.hr_line_id, l.hr_line_name, f.hr_floor_name "
+                        f"FROM hr_line l LEFT JOIN hr_floor f ON f.hr_floor_id = l.hr_line_floor_id "
+                        f"WHERE l.hr_line_id IN ({marks})",
+                        line_ids,
+                    )
+                    for lid, lname, fname in cursor.fetchall():
+                        line_names[int(lid)] = str(lname or "").strip()
+                        floor_names[int(lid)] = str(fname or "").strip()
+                    cursor.execute(
+                        f"SELECT id, hr_line_id, production_date, target_qty, hour, "
+                        f"number_worker, mo, helper, iron_man "
+                        f"FROM pt_sewing_daily_line_targets "
+                        f"WHERE hr_line_id IN ({marks}) AND production_date BETWEEN %s AND %s "
+                        f"ORDER BY id",
+                        [*line_ids, d_from, d_to],
+                    )
+                    pt_ids: list[int] = []
+                    pt_key: dict[int, tuple[int, str]] = {}
+                    for pid, lid, pdate, tqty, hrs, worker, mo, hp, im in cursor.fetchall():
+                        key = (int(lid), str(pdate))
+                        plans[key] = {
+                            "pt_id": pid,
+                            "target": int(tqty or 0),
+                            "wh": float(hrs or 0),
+                            "worker": int(float(worker or 0)),
+                            "mo": int(mo or 0),
+                            "hp": int(hp or 0),
+                            "im": int(im or 0),
+                            "styles": [],
+                        }
+                        pt_ids.append(pid)
+                        pt_key[pid] = key
+                    if pt_ids:
+                        pmarks = ", ".join(["%s"] * len(pt_ids))
+                        cursor.execute(
+                            f"SELECT pt_sewing_id, stl_no FROM daily_line_style_targets "
+                            f"WHERE pt_sewing_id IN ({pmarks}) AND deleted_at IS NULL",
+                            pt_ids,
+                        )
+                        for pid, stl in cursor.fetchall():
+                            key = pt_key.get(int(pid))
+                            name = (stl or "").strip()
+                            if key and name and name not in plans[key]["styles"]:
+                                plans[key]["styles"].append(name)
+            except Exception:
+                pass
+
+        # --- QC output per date/line/style (pass qty per save) --------------
+        out_by_day_line: dict[tuple[str, int], dict[str, int]] = {}
+        single_line = line_keys[0] if len(line_keys) == 1 else None
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                "SELECT date, floor, line, COALESCE(style, ''), bundle_id, created_at, "
+                "MAX(pass_qty) FROM day_qc_diffect "
+                "WHERE date BETWEEN %s AND %s "
+                "GROUP BY date, floor, line, style, bundle_id, created_at",
+                [d_from, d_to],
+            )
+            for dkey, fl, ln, stl, _bid, _cat, pq in cursor.fetchall():
+                fl, ln = int(fl or 0), int(ln or 0)
+                if (fl, ln) not in machines_by_line:
+                    if single_line is None:
+                        continue
+                    fl, ln = single_line
+                day_line = out_by_day_line.setdefault((str(dkey), ln), {})
+                stl = (stl or "").strip()
+                day_line[stl] = day_line.get(stl, 0) + int(pq or 0)
+
+        # --- SMV per style (plan styles + output styles, one query) ---------
+        all_styles = sorted(
+            {s for p in plans.values() for s in p["styles"]}
+            | {s for d in out_by_day_line.values() for s in d if s}
+        )
+        smv_map: dict[str, float] = {}
+        if all_styles:
+            try:
+                with connections["cuttingedge"].cursor() as cursor:
+                    smarks = ", ".join(["%s"] * len(all_styles))
+                    cursor.execute(
+                        f"SELECT stl_no, COALESCE(production_smv, stl_smv, 0) "
+                        f"FROM mr_style WHERE stl_no IN ({smarks})",
+                        all_styles,
+                    )
+                    for stl, smv in cursor.fetchall():
+                        v = float(smv or 0)
+                        if v > 0:
+                            smv_map[str(stl).strip()] = v
+            except Exception:
+                pass
+
+        # --- rows: one per day per line --------------------------------------
+        rows: list[dict] = []
+        for d in days:
+            dkey = d.isoformat()
+            punches, _ = staff_punch_summary(d)
+            for floor, line_no in line_keys:
+                plan = plans.get((line_no, dkey), {})
+                out_styles = out_by_day_line.get((dkey, line_no), {})
+                output = sum(out_styles.values())
+
+                style_names = plan.get("styles") or sorted(s for s in out_styles if s)
+                # SMV from every style we can resolve (QC output styles often
+                # match mr_style when the plan style string does not)
+                known = [
+                    smv_map[s]
+                    for s in {*style_names, *(s for s in out_styles if s)}
+                    if s in smv_map
+                ]
+                avg_smv = sum(known) / len(known) if known else 0.0
+                day_sah = sum(
+                    qty * smv_map.get(stl, avg_smv) for stl, qty in out_styles.items()
+                ) / 60.0
+
+                mids = machines_by_line[(floor, line_no)]
+                staff_rows = [r for m, lst in punches.items() if m in mids for r in lst]
+                present_mp = len(staff_rows)
+                man_hours = sum(r["actual_seconds"] for r in staff_rows) / 3600.0
+
+                worker = plan.get("worker", 0)
+                wh = plan.get("wh", 0.0)
+                target = plan.get("target", 0)
+                plan_man_hour = worker * wh
+                plan_sah = target * avg_smv / 60.0
+
+                if not (plan or output or present_mp):
+                    continue
+                rows.append(
+                    {
+                        "date": dkey,
+                        "floor": floor_names.get(line_no) or str(floor),
+                        "line": line_names.get(line_no) or str(line_no),
+                        "styles": ", ".join(style_names) or "—",
+                        "smv": round(avg_smv, 2),
+                        "plan_mp": worker,
+                        "plan_mo": plan.get("mo", 0),
+                        "plan_hp": plan.get("hp", 0),
+                        "plan_im": plan.get("im", 0),
+                        "plan_total_mp": worker + plan.get("mo", 0) + plan.get("hp", 0) + plan.get("im", 0),
+                        "plan_target": target,
+                        "plan_wh": round(wh, 1),
+                        "plan_man_hour": round(plan_man_hour, 1),
+                        "plan_sah": round(plan_sah, 2),
+                        "plan_eff_pct": round(plan_sah / plan_man_hour * 100, 2) if plan_man_hour else 0.0,
+                        "present_mp": present_mp,
+                        "day_man_hour": round(man_hours, 2),
+                        "output": output,
+                        "day_sah": round(day_sah, 2),
+                        "eff_pct": round(day_sah / man_hours * 100, 2) if man_hours else 0.0,
+                        "ach_pct": round(output / target * 100, 1) if target else 0.0,
+                    }
+                )
+
+        tot_man_hours = sum(r["day_man_hour"] for r in rows)
+        tot_day_sah = sum(r["day_sah"] for r in rows)
+        tot_plan_mh = sum(r["plan_man_hour"] for r in rows)
+        tot_plan_sah = sum(r["plan_sah"] for r in rows)
+        tot_target = sum(r["plan_target"] for r in rows)
+        tot_output = sum(r["output"] for r in rows)
+        totals = {
+            "plan_mp": sum(r["plan_mp"] for r in rows),
+            "plan_total_mp": sum(r["plan_total_mp"] for r in rows),
+            "plan_target": tot_target,
+            "plan_man_hour": round(tot_plan_mh, 1),
+            "plan_sah": round(tot_plan_sah, 2),
+            "plan_eff_pct": round(tot_plan_sah / tot_plan_mh * 100, 2) if tot_plan_mh else 0.0,
+            "present_mp": sum(r["present_mp"] for r in rows),
+            "day_man_hour": round(tot_man_hours, 2),
+            "output": tot_output,
+            "day_sah": round(tot_day_sah, 2),
+            "eff_pct": round(tot_day_sah / tot_man_hours * 100, 2) if tot_man_hours else 0.0,
+            "ach_pct": round(tot_output / tot_target * 100, 1) if tot_target else 0.0,
+        }
+        return Response(
+            {"from": str(d_from), "to": str(d_to), "rows": rows, "totals": totals}
+        )

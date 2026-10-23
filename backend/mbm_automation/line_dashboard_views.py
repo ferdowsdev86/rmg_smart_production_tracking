@@ -941,6 +941,109 @@ def _hm_display(seconds: int) -> str:
     return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
 
 
+STAFF_BREAK_SECONDS = 3600  # 1 hour lunch break per staff
+
+
+def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict]:
+    """Per-machine SEWING-staff punch rows + line totals for one day.
+
+    Shared by FloorOverviewStaffView (live dashboard heatmap) and the
+    day efficiency report. See the view docstring for the rules."""
+    all_machines = sorted(
+        set(LineLayout.objects.all().values_list("machin_no", flat=True))
+    )
+    now = timezone.now()
+    today = _sewing_now_wall(now).date()
+    sewing_depts = sewing_department_ids()
+
+    logs_by_machine: dict[int, list] = defaultdict(list)
+    qs = SewingLog.objects.filter(
+        machin_id__in=all_machines, logged_at__date=on_date
+    ).order_by("logged_at", "id")
+    for log in qs:
+        logs_by_machine[int(log.machin_id)].append(log)
+
+    machines: dict[str, list[dict]] = {}
+    total_work = 0
+    total_break = 0
+    staff_total = 0
+
+    for mid, mlogs in sorted(logs_by_machine.items()):
+        by_user: dict[str, list] = defaultdict(list)
+        order: list[str] = []
+        for log in mlogs:
+            uid = (log.machin_user or "").strip()
+            if not uid:
+                continue
+            if uid not in by_user:
+                order.append(uid)
+            by_user[uid].append(log)
+
+        rows: list[dict] = []
+        for uid in order:
+            profile = lookup_hr_profile(uid)
+            dept = profile.get("hr_new_department_id") if profile else None
+            if sewing_depts and dept not in sewing_depts:
+                continue
+            ulogs = by_user[uid]
+            login_log = next((l for l in ulogs if _is_flag3_only_login_log(l)), None)
+            first = login_log or ulogs[0]
+            in_dt = _sewing_wall_datetime(first.logged_at)
+            if not in_dt:
+                continue
+            in_display = _iso_to_local_ampm(first.logged_at.isoformat())
+
+            still_in = on_date == today and int(ulogs[-1].flag3 or 0) != 0
+            if still_in:
+                out_display = "—"
+                end_dt = _sewing_now_wall(now)
+            else:
+                last = ulogs[-1]
+                end_dt = _sewing_wall_datetime(last.logged_at) or in_dt
+                out_display = (
+                    _iso_to_local_ampm(last.logged_at.isoformat())
+                    if last.logged_at
+                    else "—"
+                )
+
+            work = max(0, int((end_dt - in_dt).total_seconds()))
+            # only sessions over 2 minutes count as a real shift
+            if work <= 120:
+                continue
+            brk = min(work, STAFF_BREAK_SECONDS)
+            rows.append(
+                {
+                    "operator_id": uid,
+                    "name": (profile or {}).get("operator_name") or _operator_display_name(uid),
+                    "in_time": in_display,
+                    "out_time": out_display,
+                    "still_in": still_in,
+                    "working_seconds": work,
+                    "working_display": _hm_display(work),
+                    "actual_seconds": work - brk,
+                    "actual_display": _hm_display(work - brk),
+                }
+            )
+            total_work += work
+            total_break += brk
+            staff_total += 1
+
+        if rows:
+            machines[str(mid)] = rows
+
+    actual = max(0, total_work - total_break)
+    totals = {
+        "staff": staff_total,
+        "working_seconds": total_work,
+        "working_display": _hm_display(total_work),
+        "break_seconds": total_break,
+        "break_display": _hm_display(total_break),
+        "actual_seconds": actual,
+        "actual_display": _hm_display(actual),
+    }
+    return machines, totals
+
+
 class FloorOverviewStaffView(APIView):
     """GET /api/automation/floor_overview_staff/[?date=YYYY-MM-DD]
 
@@ -961,106 +1064,14 @@ class FloorOverviewStaffView(APIView):
     clamped to that person's working time) and actual working hours.
     """
 
-    BREAK_SECONDS = 3600  # 1 hour lunch break per staff
-
     def get(self, request):
         on_date = _parse_on_date(request.query_params.get("date"))
-        all_machines = sorted(
-            set(LineLayout.objects.all().values_list("machin_no", flat=True))
-        )
-        now = timezone.now()
-        today = _sewing_now_wall(now).date()
-        sewing_depts = sewing_department_ids()
-
-        logs_by_machine: dict[int, list] = defaultdict(list)
-        qs = SewingLog.objects.filter(
-            machin_id__in=all_machines, logged_at__date=on_date
-        ).order_by("logged_at", "id")
-        for log in qs:
-            logs_by_machine[int(log.machin_id)].append(log)
-
-        machines: dict[str, list[dict]] = {}
-        total_work = 0
-        total_break = 0
-        staff_total = 0
-
-        for mid, mlogs in sorted(logs_by_machine.items()):
-            by_user: dict[str, list] = defaultdict(list)
-            order: list[str] = []
-            for log in mlogs:
-                uid = (log.machin_user or "").strip()
-                if not uid:
-                    continue
-                if uid not in by_user:
-                    order.append(uid)
-                by_user[uid].append(log)
-
-            rows: list[dict] = []
-            for uid in order:
-                profile = lookup_hr_profile(uid)
-                dept = profile.get("hr_new_department_id") if profile else None
-                if sewing_depts and dept not in sewing_depts:
-                    continue
-                ulogs = by_user[uid]
-                login_log = next((l for l in ulogs if _is_flag3_only_login_log(l)), None)
-                first = login_log or ulogs[0]
-                in_dt = _sewing_wall_datetime(first.logged_at)
-                if not in_dt:
-                    continue
-                in_display = _iso_to_local_ampm(first.logged_at.isoformat())
-
-                still_in = on_date == today and int(ulogs[-1].flag3 or 0) != 0
-                if still_in:
-                    out_display = "—"
-                    end_dt = _sewing_now_wall(now)
-                else:
-                    last = ulogs[-1]
-                    end_dt = _sewing_wall_datetime(last.logged_at) or in_dt
-                    out_display = (
-                        _iso_to_local_ampm(last.logged_at.isoformat())
-                        if last.logged_at
-                        else "—"
-                    )
-
-                work = max(0, int((end_dt - in_dt).total_seconds()))
-                # only sessions over 2 minutes count as a real shift
-                if work <= 120:
-                    continue
-                brk = min(work, self.BREAK_SECONDS)
-                rows.append(
-                    {
-                        "operator_id": uid,
-                        "name": (profile or {}).get("operator_name") or _operator_display_name(uid),
-                        "in_time": in_display,
-                        "out_time": out_display,
-                        "still_in": still_in,
-                        "working_seconds": work,
-                        "working_display": _hm_display(work),
-                        "actual_seconds": work - brk,
-                        "actual_display": _hm_display(work - brk),
-                    }
-                )
-                total_work += work
-                total_break += brk
-                staff_total += 1
-
-            if rows:
-                machines[str(mid)] = rows
-
-        actual = max(0, total_work - total_break)
+        machines, totals = staff_punch_summary(on_date)
         return Response(
             {
                 "date": on_date.isoformat(),
-                "break_per_staff_seconds": self.BREAK_SECONDS,
+                "break_per_staff_seconds": STAFF_BREAK_SECONDS,
                 "machines": machines,
-                "totals": {
-                    "staff": staff_total,
-                    "working_seconds": total_work,
-                    "working_display": _hm_display(total_work),
-                    "break_seconds": total_break,
-                    "break_display": _hm_display(total_break),
-                    "actual_seconds": actual,
-                    "actual_display": _hm_display(actual),
-                },
+                "totals": totals,
             }
         )
