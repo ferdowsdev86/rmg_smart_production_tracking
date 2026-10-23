@@ -440,6 +440,10 @@ export default function QualityCheck() {
         toast.error(`${p.part_name}: select WHICH defect was found (defect type).`);
         return;
       }
+      if (newDefect === 0 && Object.keys(e.sel || {}).length > 0) {
+        toast.error(`${p.part_name}: set the DEFECT (garments) count with +/− before saving.`);
+        return;
+      }
     }
     setSaving(true);
     try {

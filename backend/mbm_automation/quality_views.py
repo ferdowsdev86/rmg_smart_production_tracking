@@ -488,10 +488,13 @@ def _save_day_qc_diffect(
                 dqty = max(0, int(d.get("qty") or 0))
                 if sl in names and dqty > 0:
                     entries.append((sl, names[sl][0], names[sl][1], dqty))
-        # New defects this save: typed entries, or the plain delta when no type
-        # was selected (repair / reject-only saves carry 0 new defects).
-        typeless_new = 0 if entries else max(0, total_defect - prev_defect)
-        new_defect_total = sum(e[3] for e in entries) + typeless_new
+        # New DEFECTIVE GARMENTS this save = the manual counter's delta —
+        # the user sets it with +/- and it saves AS ENTERED. Selected defect
+        # types are the name-wise breakdown only (one garment can carry
+        # several defect types, so their pcs may exceed the garment count).
+        garment_delta = max(0, total_defect - prev_defect)
+        typeless_new = 0 if entries else garment_delta
+        new_defect_total = garment_delta
         if len(entries) == 1:
             d_sl, d_code, d_name = entries[0][0], entries[0][1], entries[0][2]
         elif entries:
