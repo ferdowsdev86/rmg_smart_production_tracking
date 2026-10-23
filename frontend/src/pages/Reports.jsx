@@ -16,9 +16,15 @@ const pct = (n) => `${(n ?? 0).toFixed ? n.toFixed(2) : n}%`;
 
 /* Day Efficiency Report — modelled on the ERP sheet, from our own data:
    plan (ERP targets) vs actual (staff punches + QC output), SAH-based. */
+const TABS = [
+  { id: "efficiency", label: "Efficiency Report" },
+  { id: "manhour", label: "Man Hour Details" },
+];
+
 export default function Reports() {
   const token = useAuthStore((s) => s.accessToken);
   const [urlParams] = useSearchParams();
+  const [tab, setTab] = useState(urlParams.get("tab") || "efficiency");
   const [from, setFrom] = useState(urlParams.get("date") || todayISO());
   const [to, setTo] = useState(urlParams.get("date") || todayISO());
 
@@ -28,11 +34,23 @@ export default function Reports() {
       api
         .get("/reports/day_efficiency/", { params: { date_from: from, date_to: to } })
         .then((r) => r.data),
-    enabled: !!token,
+    enabled: !!token && tab === "efficiency",
+  });
+
+  const manhour = useQuery({
+    queryKey: ["manhour-details", from],
+    queryFn: () =>
+      api.get("/automation/floor_overview_staff/", { params: { date: from } }).then((r) => r.data),
+    enabled: !!token && tab === "manhour",
   });
 
   const rows = report.data?.rows ?? [];
   const T = report.data?.totals;
+
+  const mhRows = Object.entries(manhour.data?.machine_hours ?? {})
+    .map(([mid, v]) => ({ mid, ...v }))
+    .sort((a, b) => Number(a.mid) - Number(b.mid));
+  const mhT = manhour.data?.totals;
 
   function exportExcel() {
     const head = `
@@ -79,6 +97,39 @@ export default function Reports() {
     window.URL.revokeObjectURL(url);
   }
 
+  function exportManHourExcel() {
+    const body = mhRows
+      .map(
+        (r) => `
+      <tr>
+        <td>M${r.mid}</td><td>${r.operators.join(", ")}</td><td>${r.in_time}</td><td>${r.sewing_start}</td>
+        <td>${r.count_from}</td><td>${r.break_display}</td><td>${r.still_in ? "Running" : r.out_time}</td>
+        <td>${r.working_display}</td><td>${r.actual_display}</td>
+      </tr>`
+      )
+      .join("");
+    const foot = mhT
+      ? `<tr style="background:#e2e8f0;font-weight:bold">
+          <td>Total</td><td>${mhT.staff} staff · ${mhT.machines} W/S</td><td></td><td></td><td></td>
+          <td>${mhT.break_display}</td><td></td><td>${mhT.working_display}</td><td>${mhT.actual_display}</td>
+        </tr>`
+      : "";
+    const html = `<html><head><meta charset="utf-8"></head><body>
+      <h3>MBM Group — Line Man Hour Details (${from})</h3>
+      <table border="1" cellspacing="0" cellpadding="4">
+        <tr style="background:#334155;color:#fff;font-weight:bold">
+          <th>Machine</th><th>Operator</th><th>In Time</th><th>Sewing Start</th><th>Count From</th>
+          <th>Break</th><th>End Time</th><th>Working Hour</th><th>Man Hour</th>
+        </tr>${body}${foot}</table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Man-hour-details-${from}.xls`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }
+
   const th = "border border-slate-200 px-2 py-2 text-center whitespace-nowrap";
   const td = "border border-slate-200 px-2 py-1.5 text-center tabular-nums";
 
@@ -91,30 +142,49 @@ export default function Reports() {
       }`}</style>
 
       <header className="no-print">
-        <h1 className="text-2xl font-semibold text-slate-900">Efficiency Report</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Reports</h1>
         <p className="text-sm text-slate-600 mt-1">
-          Day efficiency — plan (ERP targets) vs actual (staff punches + QC output), SAH based.
+          Day efficiency &amp; line man hour — plan (ERP targets) vs actual (staff punches + QC output).
         </p>
       </header>
 
+      <div className="no-print flex flex-wrap gap-2">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`rounded-full px-3 py-1.5 text-sm border ${
+              tab === t.id ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200 text-slate-700"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="no-print flex flex-wrap items-center gap-3">
-        <label className="text-xs text-slate-600">From</label>
+        <label className="text-xs text-slate-600">{tab === "efficiency" ? "From" : "Date"}</label>
         <input
           type="date"
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
           value={from}
           onChange={(e) => setFrom(e.target.value)}
         />
-        <label className="text-xs text-slate-600">To</label>
-        <input
-          type="date"
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-          value={to}
-          onChange={(e) => setTo(e.target.value)}
-        />
+        {tab === "efficiency" ? (
+          <>
+            <label className="text-xs text-slate-600">To</label>
+            <input
+              type="date"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
+          </>
+        ) : null}
         <button
           type="button"
-          onClick={exportExcel}
+          onClick={tab === "efficiency" ? exportExcel : exportManHourExcel}
           className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100"
         >
           <FileSpreadsheet className="h-4 w-4" /> Export Excel
@@ -128,6 +198,82 @@ export default function Reports() {
         </button>
       </div>
 
+      {tab === "manhour" ? (
+        <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card">
+          <div className="border-b-2 border-slate-800 px-4 py-3 text-center">
+            <div className="text-lg font-bold tracking-tight text-slate-900">MBM Group</div>
+            <div className="text-[13px] font-semibold text-slate-700">Line Man Hour Details — Machine Wise</div>
+            <div className="mt-1 text-[12px] text-slate-600">
+              Date: <b className="text-slate-900">{from}</b>
+              {mhT ? (
+                <span className="ml-3">
+                  Staff <b>{mhT.staff}</b> · Active W/S <b>{mhT.machines}</b> · Working <b>{mhT.working_display}</b> · Break <b>{mhT.break_display}</b> · Man Hour <b className="text-emerald-700">{mhT.actual_display}</b>
+                </span>
+              ) : null}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-[12px]">
+              <thead>
+                <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
+                  <th className={th}>Machine</th>
+                  <th className={`${th} text-left`}>Operator</th>
+                  <th className={th}>In Time</th>
+                  <th className={th}>Sewing Start</th>
+                  <th className={th} title="Man hour counting starts from 08:00 or the later punch">Count From</th>
+                  <th className={th}>Break</th>
+                  <th className={th}>End Time</th>
+                  <th className={th}>Working Hour</th>
+                  <th className={`${th} bg-emerald-50 text-emerald-700`}>Man Hour</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mhRows.map((r) => (
+                  <tr key={r.mid} className="hover:bg-sky-50/40">
+                    <td className={`${td} font-bold text-slate-900`}>M{r.mid}</td>
+                    <td className={`${td} max-w-[220px] truncate text-left`} title={r.operators.join(", ")}>{r.operators.join(", ") || "—"}</td>
+                    <td className={td}>{r.in_time}</td>
+                    <td className={td}>{r.sewing_start}</td>
+                    <td className={`${td} text-slate-500`}>{r.count_from}</td>
+                    <td className={td}>{r.break_display}</td>
+                    <td className={td}>
+                      {r.still_in ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Running</span> : r.out_time}
+                    </td>
+                    <td className={`${td} font-semibold`}>{r.working_display}</td>
+                    <td className={`${td} bg-emerald-50/50 font-bold text-emerald-800`}>{r.actual_display}</td>
+                  </tr>
+                ))}
+                {!mhRows.length ? (
+                  <tr>
+                    <td colSpan={9} className="border border-slate-200 px-3 py-6 text-center text-slate-400">
+                      {manhour.isFetching ? "Loading…" : "No punches for this date."}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+              {mhT ? (
+                <tfoot>
+                  <tr className="bg-slate-200 font-bold text-slate-900">
+                    <td className={td}>Total</td>
+                    <td className={`${td} text-left`}>{mhT.staff} staff · {mhT.machines} W/S</td>
+                    <td className={td} colSpan={3} />
+                    <td className={td}>{mhT.break_display}</td>
+                    <td className={td} />
+                    <td className={td}>{mhT.working_display}</td>
+                    <td className={`${td} text-emerald-800`}>{mhT.actual_display}</td>
+                  </tr>
+                </tfoot>
+              ) : null}
+            </table>
+          </div>
+          <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
+            In Time = first punch on the machine · Sewing Start = first production scan · Count From = 08:00 or the later
+            punch · Working Hour = Count From → End (now while running) · Man Hour = Working − 1h break
+          </div>
+        </div>
+      ) : null}
+
+      {tab !== "efficiency" ? null : (
       <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card">
         {/* paper-style header */}
         <div className="border-b-2 border-slate-800 px-4 py-3 text-center">
@@ -236,6 +382,7 @@ export default function Reports() {
           Day SAH = Σ output × SMV ÷ 60 · Efficiency % = Day SAH ÷ Day Man Hour
         </div>
       </div>
+      )}
     </div>
   );
 }

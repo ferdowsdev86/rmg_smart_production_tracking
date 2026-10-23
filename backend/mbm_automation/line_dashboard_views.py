@@ -19,11 +19,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from floors.models import DayLineTarget
-from mbm_automation.bundle_barcode import bulk_qty_for_barcodes, production_qty_for_flag9
+from mbm_automation.bundle_barcode import (
+    bulk_qty_for_barcodes,
+    flag9_is_empty,
+    production_qty_for_flag9,
+)
 from mbm_automation.day_sew_target_views import _calc_hour_target, _parse_on_date
 from mbm_automation.hr_lookup import lookup_hr_profile, sewing_department_ids
 from mbm_automation.models import LineLayout, SewingLog
 from mbm_automation.sewing_analysis import (
+    _flag1_runtime,
     _is_flag3_only_login_log,
     _iso_to_local_ampm,
     _operator_display_name,
@@ -956,6 +961,10 @@ def _hm_display(seconds: int) -> str:
     return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
 
 
+def _ampm(dt) -> str:
+    return dt.strftime("%I:%M %p").lstrip("0") if dt else "—"
+
+
 STAFF_BREAK_SECONDS = 3600  # 1 hour lunch break per staff
 
 # floor_overview polls every 8s and also needs punches now — cache the
@@ -1000,8 +1009,17 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
     machines: dict[str, list[dict]] = {}
     person_raw: dict[str, dict] = {}
     machine_raw: dict[str, dict] = {}
+    sew_start_by_machine: dict[str, object] = {}
 
     for mid, mlogs in sorted(logs_by_machine.items()):
+        # sewing start = first production evidence on the machine
+        # (machine-run seconds in flag1, or a bundle scan in flag9)
+        for log in mlogs:
+            if _flag1_runtime(log) > 0 or not flag9_is_empty(getattr(log, "flag9", None)):
+                sew_dt = _sewing_wall_datetime(log.logged_at)
+                if sew_dt:
+                    sew_start_by_machine[str(mid)] = sew_dt
+                break
         by_user: dict[str, list] = defaultdict(list)
         order: list[str] = []
         for log in mlogs:
@@ -1102,6 +1120,13 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
         brk = min(work, STAFF_BREAK_SECONDS)
         machine_hours[mid] = {
             "still_in": m["still_in"],
+            "operators": [r["name"] for r in machines.get(mid, [])],
+            "in_time": _ampm(m["in_dt"]),
+            "count_from": _ampm(start_dt),
+            "sewing_start": _ampm(sew_start_by_machine.get(mid)),
+            "out_time": "—" if m["still_in"] else _ampm(m["end_dt"]),
+            "break_seconds": brk,
+            "break_display": _hm_display(brk),
             "working_seconds": work,
             "working_display": _hm_display(work),
             "actual_seconds": work - brk,
@@ -1151,12 +1176,13 @@ class FloorOverviewStaffView(APIView):
 
     def get(self, request):
         on_date = _parse_on_date(request.query_params.get("date"))
-        machines, totals, _persons, _machine_hours = staff_punch_summary(on_date)
+        machines, totals, _persons, machine_hours = staff_punch_summary(on_date)
         return Response(
             {
                 "date": on_date.isoformat(),
                 "break_per_staff_seconds": STAFF_BREAK_SECONDS,
                 "machines": machines,
+                "machine_hours": machine_hours,
                 "totals": totals,
             }
         )
