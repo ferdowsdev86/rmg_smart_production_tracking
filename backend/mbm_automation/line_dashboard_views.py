@@ -950,10 +950,12 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
     Shared by FloorOverviewStaffView (live dashboard heatmap) and the
     day efficiency report. See the view docstring for the rules.
 
-    Returns (machines, totals, persons). A person who punched several
-    machines shows on each machine row, but `persons` and `totals`
-    count them ONCE — one span from their earliest in to latest out,
-    one 1h break — so manpower / man-hours match the real headcount."""
+    Returns (machines, totals, persons, machine_hours). A person who
+    punched several machines shows on each machine row, but `persons`
+    and `totals` count them ONCE — one span from their earliest in to
+    latest out, one 1h break — so manpower matches the real headcount.
+    `machine_hours` aggregates per MACHINE the same way (first in to
+    last out on that machine, one 1h break) for machine-hour sums."""
     all_machines = sorted(
         set(LineLayout.objects.all().values_list("machin_no", flat=True))
     )
@@ -970,6 +972,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
 
     machines: dict[str, list[dict]] = {}
     person_raw: dict[str, dict] = {}
+    machine_raw: dict[str, dict] = {}
 
     for mid, mlogs in sorted(logs_by_machine.items()):
         by_user: dict[str, list] = defaultdict(list)
@@ -1037,6 +1040,13 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             p["end_dt"] = max(p["end_dt"], end_dt)
             p["still_in"] = p["still_in"] or still_in
             p["machines"].append(str(mid))
+            # per MACHINE: first in to last out across its operators
+            mrow = machine_raw.setdefault(
+                str(mid), {"in_dt": in_dt, "end_dt": end_dt, "still_in": False}
+            )
+            mrow["in_dt"] = min(mrow["in_dt"], in_dt)
+            mrow["end_dt"] = max(mrow["end_dt"], end_dt)
+            mrow["still_in"] = mrow["still_in"] or still_in
 
         if rows:
             machines[str(mid)] = rows
@@ -1059,6 +1069,18 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
         total_work += work
         total_break += brk
 
+    machine_hours: dict[str, dict] = {}
+    for mid, m in machine_raw.items():
+        work = max(0, int((m["end_dt"] - m["in_dt"]).total_seconds()))
+        brk = min(work, STAFF_BREAK_SECONDS)
+        machine_hours[mid] = {
+            "still_in": m["still_in"],
+            "working_seconds": work,
+            "working_display": _hm_display(work),
+            "actual_seconds": work - brk,
+            "actual_display": _hm_display(work - brk),
+        }
+
     actual = max(0, total_work - total_break)
     totals = {
         "staff": len(persons),
@@ -1069,7 +1091,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
         "actual_seconds": actual,
         "actual_display": _hm_display(actual),
     }
-    return machines, totals, persons
+    return machines, totals, persons, machine_hours
 
 
 class FloorOverviewStaffView(APIView):
@@ -1094,7 +1116,7 @@ class FloorOverviewStaffView(APIView):
 
     def get(self, request):
         on_date = _parse_on_date(request.query_params.get("date"))
-        machines, totals, _persons = staff_punch_summary(on_date)
+        machines, totals, _persons, _machine_hours = staff_punch_summary(on_date)
         return Response(
             {
                 "date": on_date.isoformat(),

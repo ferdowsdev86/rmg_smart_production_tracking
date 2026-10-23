@@ -39,12 +39,12 @@ export default function Reports() {
       <tr style="background:#1e293b;color:#fff;font-weight:bold">
         <th colspan="5">Order Details</th><th>SMV</th>
         <th colspan="9">Plan</th>
-        <th colspan="6">Actual (Productivity &amp; Efficiency)</th>
+        <th colspan="7">Actual (Productivity &amp; Efficiency)</th>
       </tr>
       <tr style="background:#334155;color:#fff">
         <th>Date</th><th>Floor</th><th>Line</th><th>Style</th><th>&nbsp;</th><th>Sewing SMV</th>
         <th>Plan MP</th><th>MO</th><th>HP</th><th>IM</th><th>Total MP</th><th>Plan Target</th><th>Plan WH</th><th>Plan Man Hour</th><th>Plan SAH</th>
-        <th>Present MP</th><th>Day Man Hour</th><th>Output (Pcs)</th><th>Day SAH</th><th>Efficiency %</th><th>Target Ach %</th>
+        <th>Present MP</th><th>Active M/C</th><th>Day Man Hour</th><th>Output (Pcs)</th><th>Day SAH</th><th>Efficiency %</th><th>Target Ach %</th>
       </tr>`;
     const body = rows
       .map(
@@ -53,7 +53,7 @@ export default function Reports() {
         <td>${r.date}</td><td>${r.floor}</td><td>${r.line}</td><td>${r.styles}</td><td></td><td>${r.smv}</td>
         <td>${r.plan_mp}</td><td>${r.plan_mo}</td><td>${r.plan_hp}</td><td>${r.plan_im}</td><td>${r.plan_total_mp}</td>
         <td>${r.plan_target}</td><td>${r.plan_wh}</td><td>${r.plan_man_hour}</td><td>${r.plan_sah}</td>
-        <td>${r.present_mp}</td><td>${r.day_man_hour}</td><td>${r.output}</td><td>${r.day_sah}</td>
+        <td>${r.present_mp}</td><td>${r.active_machines}</td><td>${r.day_man_hour}</td><td>${r.output}</td><td>${r.day_sah}</td>
         <td>${r.eff_pct}%</td><td>${r.ach_pct}%</td>
       </tr>`
       )
@@ -63,7 +63,7 @@ export default function Reports() {
           <td colspan="5">Total</td><td></td>
           <td>${T.plan_mp}</td><td></td><td></td><td></td><td>${T.plan_total_mp}</td>
           <td>${T.plan_target}</td><td></td><td>${T.plan_man_hour}</td><td>${T.plan_sah}</td>
-          <td>${T.present_mp}</td><td>${T.day_man_hour}</td><td>${T.output}</td><td>${T.day_sah}</td>
+          <td>${T.present_mp}</td><td>${T.active_machines}</td><td>${T.day_man_hour}</td><td>${T.output}</td><td>${T.day_sah}</td>
           <td>${T.eff_pct}%</td><td>${T.ach_pct}%</td>
         </tr>`
       : "";
@@ -145,7 +145,7 @@ export default function Reports() {
                 <th colSpan={4} className={`${th} border-slate-600`}>Order Details</th>
                 <th className={`${th} border-slate-600`}>SMV</th>
                 <th colSpan={9} className={`${th} border-slate-600 bg-slate-700`}>Plan</th>
-                <th colSpan={6} className={`${th} border-slate-600`}>Actual — Productivity &amp; Efficiency</th>
+                <th colSpan={7} className={`${th} border-slate-600`}>Actual — Productivity &amp; Efficiency</th>
               </tr>
               <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
                 <th className={th}>Date</th>
@@ -163,6 +163,7 @@ export default function Reports() {
                 <th className={th}>Man Hour</th>
                 <th className={th}>SAH</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Present MP</th>
+                <th className={`${th} bg-emerald-50 text-emerald-700`}>Active M/C</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Man Hour</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Output</th>
                 <th className={`${th} bg-emerald-50 text-emerald-700`}>Day SAH</th>
@@ -188,6 +189,7 @@ export default function Reports() {
                   <td className={td}>{fmt(r.plan_man_hour)}</td>
                   <td className={td}>{fmt(r.plan_sah)}</td>
                   <td className={`${td} bg-emerald-50/50 font-semibold`}>{r.present_mp}</td>
+                  <td className={`${td} bg-emerald-50/50 font-semibold`}>{r.active_machines}</td>
                   <td className={`${td} bg-emerald-50/50`}>{fmt(r.day_man_hour)}</td>
                   <td className={`${td} bg-emerald-50/50 font-bold text-slate-900`}>{fmt(r.output)}</td>
                   <td className={`${td} bg-emerald-50/50`}>{fmt(r.day_sah)}</td>
@@ -197,7 +199,7 @@ export default function Reports() {
               ))}
               {!rows.length ? (
                 <tr>
-                  <td colSpan={20} className="border border-slate-200 px-3 py-6 text-center text-slate-400">
+                  <td colSpan={21} className="border border-slate-200 px-3 py-6 text-center text-slate-400">
                     {report.isFetching ? "Loading…" : "No data for this date range."}
                   </td>
                 </tr>
@@ -216,6 +218,7 @@ export default function Reports() {
                   <td className={td}>{fmt(T.plan_man_hour)}</td>
                   <td className={td}>{fmt(T.plan_sah)}</td>
                   <td className={td}>{T.present_mp}</td>
+                  <td className={td}>{T.active_machines}</td>
                   <td className={td}>{fmt(T.day_man_hour)}</td>
                   <td className={td}>{fmt(T.output)}</td>
                   <td className={td}>{fmt(T.day_sah)}</td>
@@ -228,8 +231,9 @@ export default function Reports() {
         </div>
 
         <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
-          Present MP &amp; Man Hour = SEWING-department staff punches (1h lunch break deducted) ·
-          Output = QC pass qty · Day SAH = Σ output × SMV ÷ 60 · Efficiency % = Day SAH ÷ Day Man Hour
+          Present MP = distinct SEWING staff punched · Man Hour = Σ active machines&apos; working hours
+          (first in → last out per machine, 1h break deducted) · Output = QC pass qty ·
+          Day SAH = Σ output × SMV ÷ 60 · Efficiency % = Day SAH ÷ Day Man Hour
         </div>
       </div>
     </div>

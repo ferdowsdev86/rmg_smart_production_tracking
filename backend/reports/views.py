@@ -314,9 +314,11 @@ class DayEfficiencyReportView(APIView):
       plan   — pt_sewing_daily_line_targets (worker / MO / HP / IM,
                working hours, target qty) + daily_line_style_targets
                styles; SMV from mr_style (production_smv, stl_smv)
-      actual — SEWING-department staff punches (present manpower and
-               man hours with the 1h lunch break deducted) and QC output
-               (day_qc_diffect pass qty, style-wise)
+      actual — SEWING-department staff punches (present manpower =
+               distinct persons; day man hours = Σ active machines'
+               working hours, first in → last out per machine with the
+               1h lunch break deducted) and QC output (day_qc_diffect
+               pass qty, style-wise)
 
       Plan man hour  = plan worker × plan WH
       Plan SAH       = plan target × SMV / 60
@@ -455,7 +457,7 @@ class DayEfficiencyReportView(APIView):
         rows: list[dict] = []
         for d in days:
             dkey = d.isoformat()
-            _punches, _totals, persons = staff_punch_summary(d)
+            _punches, _totals, persons, machine_hours = staff_punch_summary(d)
             for floor, line_no in line_keys:
                 plan = plans.get((line_no, dkey), {})
                 out_styles = out_by_day_line.get((dkey, line_no), {})
@@ -474,14 +476,17 @@ class DayEfficiencyReportView(APIView):
                     qty * smv_map.get(stl, avg_smv) for stl, qty in out_styles.items()
                 ) / 60.0
 
-                # distinct PERSONS on this line's machines — someone who
-                # punched two machines counts once (one span, one break)
+                # present MP = distinct PERSONS on this line's machines;
+                # man hours = Σ ACTIVE MACHINES' working hours (first in to
+                # last out per machine, 1h break deducted per machine)
                 mids = machines_by_line[(floor, line_no)]
                 line_persons = [
                     p for p in persons.values() if any(m in mids for m in p["machines"])
                 ]
                 present_mp = len(line_persons)
-                man_hours = sum(p["actual_seconds"] for p in line_persons) / 3600.0
+                line_machines = [v for m, v in machine_hours.items() if m in mids]
+                active_machines = len(line_machines)
+                man_hours = sum(v["actual_seconds"] for v in line_machines) / 3600.0
 
                 worker = plan.get("worker", 0)
                 wh = plan.get("wh", 0.0)
@@ -509,6 +514,7 @@ class DayEfficiencyReportView(APIView):
                         "plan_sah": round(plan_sah, 2),
                         "plan_eff_pct": round(plan_sah / plan_man_hour * 100, 2) if plan_man_hour else 0.0,
                         "present_mp": present_mp,
+                        "active_machines": active_machines,
                         "day_man_hour": round(man_hours, 2),
                         "output": output,
                         "day_sah": round(day_sah, 2),
@@ -531,6 +537,7 @@ class DayEfficiencyReportView(APIView):
             "plan_sah": round(tot_plan_sah, 2),
             "plan_eff_pct": round(tot_plan_sah / tot_plan_mh * 100, 2) if tot_plan_mh else 0.0,
             "present_mp": sum(r["present_mp"] for r in rows),
+            "active_machines": sum(r["active_machines"] for r in rows),
             "day_man_hour": round(tot_man_hours, 2),
             "output": tot_output,
             "day_sah": round(tot_day_sah, 2),
