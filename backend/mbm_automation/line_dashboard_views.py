@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from django.db import connections
+from django.utils import timezone
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -21,7 +22,13 @@ from floors.models import DayLineTarget
 from mbm_automation.bundle_barcode import bulk_qty_for_barcodes, production_qty_for_flag9
 from mbm_automation.day_sew_target_views import _calc_hour_target, _parse_on_date
 from mbm_automation.models import LineLayout, SewingLog
-from mbm_automation.sewing_analysis import _sewing_wall_datetime
+from mbm_automation.sewing_analysis import (
+    _is_flag3_only_login_log,
+    _iso_to_local_ampm,
+    _operator_display_name,
+    _sewing_now_wall,
+    _sewing_wall_datetime,
+)
 
 
 def _hour_in_break(hour: int, break_st, break_end) -> bool:
@@ -925,4 +932,127 @@ class TargetOutputReportView(APIView):
         return Response(
             {"from": str(d_from), "to": str(d_to),
              "summary": summary, "totals": tot, "details": details}
+        )
+
+
+def _hm_display(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
+class FloorOverviewStaffView(APIView):
+    """GET /api/automation/floor_overview_staff/[?date=YYYY-MM-DD]
+
+    Per-machine staff punch times for the live dashboard heatmap. Every
+    machin_user who logged into a machine that day gets a row — so two
+    operators on the same machine show up as two entries:
+
+    - in_time  = first clean login punch (flag3=1, every other flag 0),
+                 falling back to the user's first scan of the day
+    - out_time = the user's last row when they have logged out (latest
+                 flag3=0) or the date is in the past; "—" while still in
+    - working  = out (or now) − in; actual = working − 1h lunch break
+
+    totals = line-wide sums: staff count, working, break (1h per staff,
+    clamped to that person's working time) and actual working hours.
+    """
+
+    BREAK_SECONDS = 3600  # 1 hour lunch break per staff
+
+    def get(self, request):
+        on_date = _parse_on_date(request.query_params.get("date"))
+        all_machines = sorted(
+            set(LineLayout.objects.all().values_list("machin_no", flat=True))
+        )
+        now = timezone.now()
+        today = _sewing_now_wall(now).date()
+
+        logs_by_machine: dict[int, list] = defaultdict(list)
+        qs = SewingLog.objects.filter(
+            machin_id__in=all_machines, logged_at__date=on_date
+        ).order_by("logged_at", "id")
+        for log in qs:
+            logs_by_machine[int(log.machin_id)].append(log)
+
+        machines: dict[str, list[dict]] = {}
+        total_work = 0
+        total_break = 0
+        staff_total = 0
+
+        for mid, mlogs in sorted(logs_by_machine.items()):
+            by_user: dict[str, list] = defaultdict(list)
+            order: list[str] = []
+            for log in mlogs:
+                uid = (log.machin_user or "").strip()
+                if not uid:
+                    continue
+                if uid not in by_user:
+                    order.append(uid)
+                by_user[uid].append(log)
+
+            rows: list[dict] = []
+            for uid in order:
+                ulogs = by_user[uid]
+                login_log = next((l for l in ulogs if _is_flag3_only_login_log(l)), None)
+                first = login_log or ulogs[0]
+                in_dt = _sewing_wall_datetime(first.logged_at)
+                if not in_dt:
+                    continue
+                in_display = _iso_to_local_ampm(first.logged_at.isoformat())
+
+                still_in = on_date == today and int(ulogs[-1].flag3 or 0) != 0
+                if still_in:
+                    out_display = "—"
+                    end_dt = _sewing_now_wall(now)
+                else:
+                    last = ulogs[-1]
+                    end_dt = _sewing_wall_datetime(last.logged_at) or in_dt
+                    out_display = (
+                        _iso_to_local_ampm(last.logged_at.isoformat())
+                        if last.logged_at
+                        else "—"
+                    )
+
+                work = max(0, int((end_dt - in_dt).total_seconds()))
+                # skip ghost punches: a closed session under 2 minutes is a
+                # misread card, not a real shift
+                if not still_in and work < 120:
+                    continue
+                brk = min(work, self.BREAK_SECONDS)
+                rows.append(
+                    {
+                        "operator_id": uid,
+                        "name": _operator_display_name(uid),
+                        "in_time": in_display,
+                        "out_time": out_display,
+                        "still_in": still_in,
+                        "working_seconds": work,
+                        "working_display": _hm_display(work),
+                        "actual_seconds": work - brk,
+                        "actual_display": _hm_display(work - brk),
+                    }
+                )
+                total_work += work
+                total_break += brk
+                staff_total += 1
+
+            if rows:
+                machines[str(mid)] = rows
+
+        actual = max(0, total_work - total_break)
+        return Response(
+            {
+                "date": on_date.isoformat(),
+                "break_per_staff_seconds": self.BREAK_SECONDS,
+                "machines": machines,
+                "totals": {
+                    "staff": staff_total,
+                    "working_seconds": total_work,
+                    "working_display": _hm_display(total_work),
+                    "break_seconds": total_break,
+                    "break_display": _hm_display(total_break),
+                    "actual_seconds": actual,
+                    "actual_display": _hm_display(actual),
+                },
+            }
         )

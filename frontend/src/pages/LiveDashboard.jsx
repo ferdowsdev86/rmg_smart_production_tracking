@@ -93,6 +93,15 @@ export default function LiveDashboard() {
     staleTime: 60_000,
   });
 
+  // per-machine staff punches: in/out/working hours (multi-operator aware)
+  const staffQ = useQuery({
+    queryKey: ["dash-staff", date],
+    queryFn: () => api.get("/automation/floor_overview_staff/", { params: { date } }).then((r) => r.data),
+    enabled: !!token,
+    refetchInterval: 60_000,
+    staleTime: 55_000,
+  });
+
   // defect-type breakdown (existing drill endpoint)
   const defTypesQ = useQuery({
     queryKey: ["dash-defect-types", date],
@@ -209,7 +218,7 @@ export default function LiveDashboard() {
       ) : null}
 
       {!tv || tvPane === 1 ? (
-        <MachineHeatmap D={D} shift={shift} mach={mach} compactDefault={tv || view === "floor"} />
+        <MachineHeatmap D={D} shift={shift} mach={mach} staff={staffQ.data} compactDefault={tv || view === "floor"} />
       ) : null}
 
       {showMgmt ? (

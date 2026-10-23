@@ -30,7 +30,7 @@ const FILTERS = [
   { id: "defects", label: "Has defects" },
 ];
 
-export default function MachineHeatmap({ D, shift, mach, compactDefault = false }) {
+export default function MachineHeatmap({ D, shift, mach, staff, compactDefault = false }) {
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState("total");
@@ -98,8 +98,8 @@ export default function MachineHeatmap({ D, shift, mach, compactDefault = false 
         </div>
       }
     >
-      {/* summary filter chips */}
-      <div className="mb-2 flex flex-wrap gap-1.5">
+      {/* summary filter chips + line working-hour totals */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
         {FILTERS.map((f) => (
           <button
             key={f.id}
@@ -110,6 +110,17 @@ export default function MachineHeatmap({ D, shift, mach, compactDefault = false 
             {f.label} {counts[f.id] ?? 0}
           </button>
         ))}
+        {staff?.totals?.staff ? (
+          <span className="ml-auto inline-flex flex-wrap items-center gap-x-2 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-900 ring-1 ring-indigo-100 tabular-nums">
+            <span>Staff {staff.totals.staff}</span>
+            <span className="text-indigo-300">|</span>
+            <span>Working {staff.totals.working_display}</span>
+            <span className="text-indigo-300">|</span>
+            <span>Break {staff.totals.break_display} (1h/staff)</span>
+            <span className="text-indigo-300">|</span>
+            <span className="font-bold">Actual {staff.totals.actual_display}</span>
+          </span>
+        ) : null}
       </div>
 
       <div className="overflow-auto" style={{ maxHeight: "60vh" }}>
@@ -142,14 +153,22 @@ export default function MachineHeatmap({ D, shift, mach, compactDefault = false 
           <tbody>
             {rows.map((m) => {
               const pill = STATUS_PILL[m.status] || STATUS_PILL.running;
+              const staffRows = staff?.machines?.[String(m.mid)] || [];
               return (
                 <tr key={m.mid} className={`${rowH} ${cellText}`}>
-                  <td className="sticky left-0 z-10 border-b border-slate-100 bg-white px-2 text-left">
+                  <td className="sticky left-0 z-10 border-b border-slate-100 bg-white px-2 py-0.5 text-left align-middle">
                     <button type="button" onClick={() => setDrawer({ machine: m })} className="flex min-w-0 items-center gap-1 hover:text-blue-700">
                       <span className="font-bold text-slate-800">M{m.mid}</span>
-                      {m.operator ? <span className="max-w-[110px] truncate text-[10px] text-slate-400">{m.operator}</span> : null}
+                      {m.operator && !staffRows.length ? <span className="max-w-[110px] truncate text-[10px] text-slate-400">{m.operator}</span> : null}
                       <ChevronRight className="h-3 w-3 shrink-0 text-slate-300" />
                     </button>
+                    {staffRows.map((s) => (
+                      <div key={s.operator_id} className="flex items-center gap-1 whitespace-nowrap text-[9.5px] leading-tight text-slate-500" title={`${s.name} · IN ${s.in_time} · OUT ${s.out_time} · ${s.working_display} (actual ${s.actual_display})`}>
+                        <span className="max-w-[90px] truncate font-semibold text-slate-600">{s.name}</span>
+                        <span className="tabular-nums">{s.in_time}{s.out_time !== "—" ? `–${s.out_time}` : ""}</span>
+                        <span className={`rounded px-1 font-bold tabular-nums ${s.still_in ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{s.working_display}</span>
+                      </div>
+                    ))}
                   </td>
                   {visibleHours.map((h) => {
                     const v = Number(m.byHour[String(h.hour)]) || 0;
@@ -208,13 +227,13 @@ export default function MachineHeatmap({ D, shift, mach, compactDefault = false 
         </table>
       </div>
 
-      {drawer ? <MachineDrawer drawer={drawer} D={D} onClose={() => setDrawer(null)} hours={hours} /> : null}
+      {drawer ? <MachineDrawer drawer={drawer} D={D} onClose={() => setDrawer(null)} hours={hours} staffRows={staff?.machines?.[String(drawer.machine.mid)] || []} /> : null}
     </Panel>
   );
 }
 
 /** Side drawer: hour details, NPT events, quality summary for one machine. */
-function MachineDrawer({ drawer, D, onClose, hours }) {
+function MachineDrawer({ drawer, D, onClose, hours, staffRows = [] }) {
   const m = drawer.machine;
   const nptRows = (D.npt?.rows || []).filter((r) => Number(r.machin_id) === m.mid);
   return (
@@ -232,6 +251,27 @@ function MachineDrawer({ drawer, D, onClose, hours }) {
           <div className="rounded-lg bg-amber-50 py-1.5"><div className="text-[9px] font-bold uppercase text-amber-600">Defect</div><div className="text-[16px] font-bold tabular-nums text-amber-700">{m.defect}</div></div>
           <div className="rounded-lg bg-violet-50 py-1.5"><div className="text-[9px] font-bold uppercase text-violet-600">NPT</div><div className="text-[16px] font-bold tabular-nums text-violet-700">{m.nptMin}m</div></div>
         </div>
+        {staffRows.length ? (
+          <>
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Staff today</div>
+            <ul className="mb-3 space-y-1 text-[12px]">
+              {staffRows.map((s) => (
+                <li key={s.operator_id} className="rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-semibold text-slate-800">{s.name}</span>
+                    {s.still_in ? <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700">IN</span> : null}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] tabular-nums text-slate-500">
+                    <span>In {s.in_time}</span>
+                    <span>Out {s.out_time}</span>
+                    <span>Working {s.working_display}</span>
+                    <span>Actual {s.actual_display}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
         <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-500">Hour by hour</div>
         <table className="mb-3 w-full text-[12px] tabular-nums">
           <tbody>
