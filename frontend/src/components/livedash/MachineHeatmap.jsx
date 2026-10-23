@@ -36,7 +36,20 @@ export default function MachineHeatmap({ D, shift, mach, staff, compactDefault =
   const [sortBy, setSortBy] = useState("total");
   const [compact, setCompact] = useState(compactDefault);
   const [showFuture, setShowFuture] = useState(false);
+  const [showNoPunch, setShowNoPunch] = useState(false);
   const [drawer, setDrawer] = useState(null); // {machine, hour?}
+
+  // only machines where someone punched today are listed; the rest stay
+  // behind the "no punch" toggle (all machines remain in the data)
+  const staffMap = staff?.machines || null;
+  const noPunchCount = useMemo(
+    () => (staffMap ? mach.machines.filter((m) => !staffMap[String(m.mid)]).length : 0),
+    [mach.machines, staffMap]
+  );
+  const baseMachines = useMemo(
+    () => (staffMap && !showNoPunch ? mach.machines.filter((m) => staffMap[String(m.mid)]) : mach.machines),
+    [mach.machines, staffMap, showNoPunch]
+  );
 
   const hours = (D.hourly || []).map((s) => ({ hour: s.hour, label: s.label }));
   const nowH = shift.nowH;
@@ -45,7 +58,7 @@ export default function MachineHeatmap({ D, shift, mach, staff, compactDefault =
   const futureCount = hours.length - hours.filter((h) => hourState(h.hour) !== "future").length;
 
   const rows = useMemo(() => {
-    let list = [...mach.machines];
+    let list = [...baseMachines];
     if (filter === "defects") list = list.filter((m) => m.defect > 0);
     else if (filter !== "all") list = list.filter((m) => m.status === filter);
     if (q.trim()) {
@@ -60,13 +73,13 @@ export default function MachineHeatmap({ D, shift, mach, staff, compactDefault =
       machine: (a, b) => a.mid - b.mid,
     };
     return list.sort(sorters[sortBy] || sorters.total);
-  }, [mach.machines, filter, q, sortBy]);
+  }, [baseMachines, filter, q, sortBy]);
 
   const counts = useMemo(() => {
-    const c = { all: mach.machines.length, defects: mach.machines.filter((m) => m.defect > 0).length };
-    for (const f of ["running", "slow", "idle", "down", "notstarted"]) c[f] = mach.machines.filter((m) => m.status === f).length;
+    const c = { all: baseMachines.length, defects: baseMachines.filter((m) => m.defect > 0).length };
+    for (const f of ["running", "slow", "idle", "down", "notstarted"]) c[f] = baseMachines.filter((m) => m.status === f).length;
     return c;
-  }, [mach.machines]);
+  }, [baseMachines]);
 
   const rowH = compact ? "h-[22px]" : "h-[30px]";
   const cellText = compact ? "text-[10.5px]" : "text-[11.5px]";
@@ -110,6 +123,16 @@ export default function MachineHeatmap({ D, shift, mach, staff, compactDefault =
             {f.label} {counts[f.id] ?? 0}
           </button>
         ))}
+        {noPunchCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => setShowNoPunch(!showNoPunch)}
+            className={`rounded-full border border-dashed px-2.5 py-0.5 text-[11px] font-bold transition ${showNoPunch ? "border-slate-500 bg-slate-600 text-white" : "border-slate-300 bg-white text-slate-400 hover:text-slate-600"}`}
+            title={showNoPunch ? "Hide machines without a punch today" : "Show machines without a punch today"}
+          >
+            {showNoPunch ? "Hide" : "+"} {noPunchCount} no punch
+          </button>
+        ) : null}
         {staff?.totals?.staff ? (
           <span className="ml-auto inline-flex flex-wrap items-center gap-x-2 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-900 ring-1 ring-indigo-100 tabular-nums">
             <span>Staff {staff.totals.staff}</span>
