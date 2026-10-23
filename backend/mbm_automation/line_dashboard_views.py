@@ -944,11 +944,16 @@ def _hm_display(seconds: int) -> str:
 STAFF_BREAK_SECONDS = 3600  # 1 hour lunch break per staff
 
 
-def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict]:
+def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str, dict]]:
     """Per-machine SEWING-staff punch rows + line totals for one day.
 
     Shared by FloorOverviewStaffView (live dashboard heatmap) and the
-    day efficiency report. See the view docstring for the rules."""
+    day efficiency report. See the view docstring for the rules.
+
+    Returns (machines, totals, persons). A person who punched several
+    machines shows on each machine row, but `persons` and `totals`
+    count them ONCE — one span from their earliest in to latest out,
+    one 1h break — so manpower / man-hours match the real headcount."""
     all_machines = sorted(
         set(LineLayout.objects.all().values_list("machin_no", flat=True))
     )
@@ -964,9 +969,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict]:
         logs_by_machine[int(log.machin_id)].append(log)
 
     machines: dict[str, list[dict]] = {}
-    total_work = 0
-    total_break = 0
-    staff_total = 0
+    person_raw: dict[str, dict] = {}
 
     for mid, mlogs in sorted(logs_by_machine.items()):
         by_user: dict[str, list] = defaultdict(list)
@@ -1011,10 +1014,11 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict]:
             if work <= 120:
                 continue
             brk = min(work, STAFF_BREAK_SECONDS)
+            name = (profile or {}).get("operator_name") or _operator_display_name(uid)
             rows.append(
                 {
                     "operator_id": uid,
-                    "name": (profile or {}).get("operator_name") or _operator_display_name(uid),
+                    "name": name,
                     "in_time": in_display,
                     "out_time": out_display,
                     "still_in": still_in,
@@ -1024,16 +1028,40 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict]:
                     "actual_display": _hm_display(work - brk),
                 }
             )
-            total_work += work
-            total_break += brk
-            staff_total += 1
+            # one entry per PERSON across machines: earliest in, latest out
+            p = person_raw.setdefault(
+                uid,
+                {"name": name, "in_dt": in_dt, "end_dt": end_dt, "still_in": False, "machines": []},
+            )
+            p["in_dt"] = min(p["in_dt"], in_dt)
+            p["end_dt"] = max(p["end_dt"], end_dt)
+            p["still_in"] = p["still_in"] or still_in
+            p["machines"].append(str(mid))
 
         if rows:
             machines[str(mid)] = rows
 
+    persons: dict[str, dict] = {}
+    total_work = 0
+    total_break = 0
+    for uid, p in person_raw.items():
+        work = max(0, int((p["end_dt"] - p["in_dt"]).total_seconds()))
+        brk = min(work, STAFF_BREAK_SECONDS)
+        persons[uid] = {
+            "name": p["name"],
+            "machines": p["machines"],
+            "still_in": p["still_in"],
+            "working_seconds": work,
+            "working_display": _hm_display(work),
+            "actual_seconds": work - brk,
+            "actual_display": _hm_display(work - brk),
+        }
+        total_work += work
+        total_break += brk
+
     actual = max(0, total_work - total_break)
     totals = {
-        "staff": staff_total,
+        "staff": len(persons),
         "working_seconds": total_work,
         "working_display": _hm_display(total_work),
         "break_seconds": total_break,
@@ -1041,7 +1069,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict]:
         "actual_seconds": actual,
         "actual_display": _hm_display(actual),
     }
-    return machines, totals
+    return machines, totals, persons
 
 
 class FloorOverviewStaffView(APIView):
@@ -1066,7 +1094,7 @@ class FloorOverviewStaffView(APIView):
 
     def get(self, request):
         on_date = _parse_on_date(request.query_params.get("date"))
-        machines, totals = staff_punch_summary(on_date)
+        machines, totals, _persons = staff_punch_summary(on_date)
         return Response(
             {
                 "date": on_date.isoformat(),

@@ -455,7 +455,7 @@ class DayEfficiencyReportView(APIView):
         rows: list[dict] = []
         for d in days:
             dkey = d.isoformat()
-            punches, _ = staff_punch_summary(d)
+            _punches, _totals, persons = staff_punch_summary(d)
             for floor, line_no in line_keys:
                 plan = plans.get((line_no, dkey), {})
                 out_styles = out_by_day_line.get((dkey, line_no), {})
@@ -474,10 +474,14 @@ class DayEfficiencyReportView(APIView):
                     qty * smv_map.get(stl, avg_smv) for stl, qty in out_styles.items()
                 ) / 60.0
 
+                # distinct PERSONS on this line's machines — someone who
+                # punched two machines counts once (one span, one break)
                 mids = machines_by_line[(floor, line_no)]
-                staff_rows = [r for m, lst in punches.items() if m in mids for r in lst]
-                present_mp = len(staff_rows)
-                man_hours = sum(r["actual_seconds"] for r in staff_rows) / 3600.0
+                line_persons = [
+                    p for p in persons.values() if any(m in mids for m in p["machines"])
+                ]
+                present_mp = len(line_persons)
+                man_hours = sum(p["actual_seconds"] for p in line_persons) / 3600.0
 
                 worker = plan.get("worker", 0)
                 wh = plan.get("wh", 0.0)
