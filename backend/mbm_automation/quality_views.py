@@ -346,6 +346,20 @@ class QualityCheckView(APIView):
             )
         inc_defect = max(0, new_defect - current_defect)
         inc_reject = max(0, new_reject - current_reject)
+        # A repaired piece passes only when it is RE-CHECKED in this save:
+        # the defect/reject decrease can never exceed the pcs checked now
+        # (repairing 3 while checking 1 left 2 garments in limbo).
+        repair_total = max(0, current_defect - new_defect) + max(0, current_reject - new_reject)
+        if repair_total > check_qty:
+            return Response(
+                {
+                    "detail": (
+                        f"repair ({repair_total}) cannot exceed QC check qty "
+                        f"({check_qty}) — a repaired piece must be re-checked to pass."
+                    )
+                },
+                status=400,
+            )
         if inc_defect + inc_reject > check_qty:
             return Response(
                 {

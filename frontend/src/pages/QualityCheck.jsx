@@ -470,6 +470,10 @@ export default function QualityCheck() {
         toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
         return;
       }
+      if (Math.max(0, -sessionD) + Math.max(0, -sessionR) > qcCheck) {
+        toast.error(`${p.part_name}: repair cannot exceed QC check qty — a repaired piece must be re-checked to pass.`);
+        return;
+      }
       if (sessionD > 0 && Object.keys(e.sel || {}).length === 0) {
         toast.error(`${p.part_name}: select WHICH defect was found (defect type).`);
         return;
