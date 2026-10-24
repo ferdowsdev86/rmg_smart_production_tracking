@@ -186,13 +186,13 @@ def _npt_stage_from_card(flag1_value) -> int:
     """3-stage NPT: the device sends flag4=1 with the responder's RFID in
     flag1 — the SERVER classifies the stage from the card's HR department:
 
-      flag1 = 0 / 00000                    → 1 (operator call)
-      ENGINEERING & FACILITIES or CUTTING  → 2 (responder present)
+      flag1 = 0 / 00000 / 0000000000       → 1 (operator call)
+      ENGINEERING & FACILITIES, CUTTING or
+      CAD, SAMPLE & TECHNICAL              → 2 (responder present)
       INDUSTRIAL ENGINEERING               → 3 (NPT ended by IE)
-
-    Unknown card / other department stays stage 1."""
+      any other / unknown card             → 0 (rejected)"""
     try:
-        card = int(flag1_value or 0)
+        card = int(str(flag1_value or 0).strip() or 0)
     except (TypeError, ValueError):
         card = 0
     if card <= 0:
@@ -203,17 +203,20 @@ def _npt_stage_from_card(flag1_value) -> int:
     name = _hr_department_name((profile or {}).get("hr_new_department_id"))
     if "INDUSTRIAL ENGINEERING" in name:
         return 3
-    if "ENGINEERING & FACILITIES" in name or "CUTTING" in name:
+    if "ENGINEERING & FACILITIES" in name or "CUTTING" in name or "CAD" in name:
         return 2
-    return 1
+    return 0
 
 
-def _apply_npt_stage_response(body: dict, row) -> dict:
+def _apply_npt_stage_response(body: dict, row, stage=None) -> dict:
     """On a flag4 NPT event the device reads `npt` as the stage confirmation
-    (1 call / 2 responder present / 3 ended) instead of the day duration."""
-    stage = int(getattr(row, "flag4", 0) or 0)
-    if stage >= 1:
-        body["npt"] = stage
+    (0 rejected card / 1 call / 2 responder present / 3 ended) instead of
+    the day duration."""
+    if stage is None:
+        stage = int(getattr(row, "flag4", 0) or 0)
+        if stage < 1:
+            return body
+    body["npt"] = int(stage)
     return body
 
 
@@ -528,10 +531,16 @@ class IotDataStoreView(APIView):
                 create_kwargs[flag] = int(payload.get(flag) or 0)
 
         # 3-stage NPT: flag4 arrives as 1 with the responder's card in flag1;
-        # the stage (1 call / 2 responder / 3 ended) is decided here from the
-        # card's HR department and stored, so NPT pairing sees the real stage.
+        # the stage (0 rejected / 1 call / 2 responder / 3 ended) is decided
+        # here from the card's HR department and stored, so NPT pairing sees
+        # the real stage. A rejected card is NOT an NPT row — flag4 and the
+        # card number in flag1 are cleared (keeps MRT clean), npt=0 goes back.
+        npt_stage = None
         if create_kwargs.get("flag4") == 1:
-            create_kwargs["flag4"] = _npt_stage_from_card(create_kwargs.get("flag1"))
+            npt_stage = _npt_stage_from_card(create_kwargs.get("flag1"))
+            create_kwargs["flag4"] = npt_stage
+            if npt_stage == 0:
+                create_kwargs["flag1"] = 0
 
         try:
             row = SewingLog.objects.create(**create_kwargs)
@@ -583,6 +592,7 @@ class IotDataStoreView(APIView):
                         }
                     ),
                     row,
+                    npt_stage,
                 ),
                 status=status.HTTP_201_CREATED,
             )
@@ -611,6 +621,7 @@ class IotDataStoreView(APIView):
                     }
                 ),
                 row,
+                npt_stage,
             ),
             status=status.HTTP_201_CREATED,
         )
