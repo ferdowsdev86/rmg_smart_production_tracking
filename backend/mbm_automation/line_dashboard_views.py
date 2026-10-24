@@ -254,6 +254,14 @@ class FloorOverviewView(APIView):
         on_date = _parse_on_date(request.query_params.get("date"))
         start_hour = 8
 
+        # Heal scans whose cutting slip synced after the scan (throttled 60s).
+        try:
+            from mbm_automation.bundle_barcode import backfill_unknown_bundles
+
+            backfill_unknown_bundles(on_date)
+        except Exception:
+            pass
+
         layout = list(
             LineLayout.objects.all().values("floor", "line_no", "machin_no")
         )

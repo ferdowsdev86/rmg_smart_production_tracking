@@ -211,9 +211,9 @@ def upsert_machin_production_count(
     key = normalize_flag9(barcode)
     if machin_id is None or not flag9_is_trackable_barcode(key):
         return False
-    bundle = bundle or lookup_bundle_by_barcode(key)
-    if not bundle:
-        return False
+    # Slip not synced from cutting yet: still record the scan with qty 0 —
+    # backfill_unknown_bundles() fills the real qty once the slip appears.
+    bundle = bundle or lookup_bundle_by_barcode(key) or {}
 
     # Floor/line of the SCANNING machine from the line layout; the bundle's
     # statement floor/line names are only a fallback (often NULL).
@@ -357,3 +357,64 @@ def bundle_response_fields(flag9: Any) -> dict[str, Any]:
         # This scan's production piece count (replaces legacy +1).
         "production": qty,
     }
+
+
+_BACKFILL_LAST: dict[str, float] = {}
+
+
+def backfill_unknown_bundles(on_date: Any, *, min_interval: float = 60.0, limit: int = 100) -> int:
+    """Heal scans whose cutting slip was not synced yet at scan time.
+
+    Finds machin_production_count rows of the day with bundle_qty=0 (barcode
+    scans recorded before their bundle_cut_slips row existed) plus flag9
+    scans in sewing_log that never got a production-count row, re-resolves
+    each barcode and writes the real qty/style/po once the slip appears.
+    Throttled per date (min_interval seconds); returns rows healed."""
+    import time as _time
+
+    key = str(on_date)
+    now = _time.time()
+    if now - _BACKFILL_LAST.get(key, 0) < min_interval:
+        return 0
+    _BACKFILL_LAST[key] = now
+
+    healed = 0
+    try:
+        candidates: list[tuple[int, str]] = []
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                "SELECT machin_id, bundle_id FROM machin_production_count "
+                "WHERE date = %s AND bundle_qty = 0 AND machin_id > 0 "
+                "AND CHAR_LENGTH(bundle_id) >= 10 AND bundle_id REGEXP '^[0-9]+$' "
+                "LIMIT %s",
+                [on_date, limit],
+            )
+            candidates = [(int(m), str(b)) for m, b in cursor.fetchall()]
+            cursor.execute(
+                "SELECT DISTINCT machin_id, bundle_id FROM machin_production_count "
+                "WHERE date = %s AND machin_id > 0",
+                [on_date],
+            )
+            have = {(int(m), str(b)) for m, b in cursor.fetchall()}
+        # scans from before this fix: in sewing_log (other DB) but never
+        # mirrored into machin_production_count
+        with connections[_DB_ALIAS].cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT machin_id, flag9 FROM sewing_log "
+                "WHERE logged_at >= %s AND logged_at < DATE_ADD(%s, INTERVAL 1 DAY) "
+                "AND CHAR_LENGTH(flag9) >= 10 AND flag9 REGEXP '^[0-9]+$'",
+                [on_date, on_date],
+            )
+            for m, b in cursor.fetchall():
+                if m and (int(m), str(b)) not in have:
+                    candidates.append((int(m), str(b)))
+        for machin_id, bc in candidates[:limit]:
+            found = lookup_bundle_by_barcode(bc)
+            if found and int(found.get("qty") or 0) > 0:
+                if upsert_machin_production_count(
+                    machin_id=machin_id, barcode=bc, on_date=on_date, bundle=found
+                ):
+                    healed += 1
+    except Exception:
+        pass
+    return healed
