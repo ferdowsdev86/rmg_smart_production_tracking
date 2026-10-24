@@ -605,11 +605,11 @@ def _save_day_qc_diffect(
             # ONE row per QC save in day_qc_diffect with the save TOTALS
             cursor.execute(
                 "INSERT INTO day_qc_diffect "
-                "(date, unit, buyer, style, floor, line, bundle_id, part_no, "
+                "(date, unit, buyer, style, floor, line, bundle_id, bcss_id, part_no, "
                 "defect_sl, defect_code, defect_name, bundle_qty, pass_qty, "
                 "defect_qty, reject_qty, created_at, machin_id, machin_code, operator_id, "
                 "mbm_order, po, color, size, diffect_to_pass, reject_to_pass, qc_check) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [
                     now.date(),
                     (bundle.get("unit_name") or "")[:100] or None,
@@ -618,6 +618,7 @@ def _save_day_qc_diffect(
                     floor,
                     line,
                     barcode,
+                    bundle.get("bcss_id"),
                     (bundle.get("part_name") or "")[:100] or None,
                     d_sl,
                     d_code,

@@ -692,12 +692,7 @@ export default function QualityCheck() {
           <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
               <PackageSearch className="h-4 w-4 text-slate-400" />
-              Bundle {bundle.bundle_no ?? "—"}
-              {bundle.bcss_id ? (
-                <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[11px] font-bold text-white">
-                  BCSS {bundle.bcss_id}
-                </span>
-              ) : null}
+              Bundle {bundle.bcss_id ?? bundle.bundle_no ?? "—"}
               <span className="text-xs font-normal text-slate-400">
                 (barcode {bundle.barcode})
               </span>
