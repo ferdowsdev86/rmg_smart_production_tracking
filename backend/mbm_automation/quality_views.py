@@ -309,19 +309,32 @@ class QualityCheckView(APIView):
                 status=400,
             )
 
+        # A part scanned on several machines has SEVERAL rows for the same
+        # barcode, and the summary SUMS them — so the value must live on ONE
+        # row (the latest), never be written to every row (3 on 4 rows showed
+        # as 12).
         with connections["default"].cursor() as cursor:
             if mode == "set":
                 cursor.execute(
                     "UPDATE machin_production_count "
-                    "SET defect=%s, reject=%s, qc_checked=1 "
-                    "WHERE bundle_id=%s",
+                    "SET defect=0, reject=0, qc_checked=1 WHERE bundle_id=%s",
+                    [barcode],
+                )
+                cursor.execute(
+                    "UPDATE machin_production_count "
+                    "SET defect=%s, reject=%s "
+                    "WHERE bundle_id=%s ORDER BY date DESC LIMIT 1",
                     [defect, reject, barcode],
                 )
             else:
                 cursor.execute(
+                    "UPDATE machin_production_count SET qc_checked=1 WHERE bundle_id=%s",
+                    [barcode],
+                )
+                cursor.execute(
                     "UPDATE machin_production_count "
-                    "SET defect = defect + %s, reject = reject + %s, qc_checked=1 "
-                    "WHERE bundle_id=%s",
+                    "SET defect = defect + %s, reject = reject + %s "
+                    "WHERE bundle_id=%s ORDER BY date DESC LIMIT 1",
                     [defect, reject, barcode],
                 )
 
