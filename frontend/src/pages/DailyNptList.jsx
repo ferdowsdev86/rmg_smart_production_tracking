@@ -108,8 +108,8 @@ function NptReasonModal({ open, row, onClose, onSaved }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4">
+      <div className="flex max-h-[92vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:max-h-[85vh] sm:max-w-lg sm:rounded-xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Confirm NPT Reason</h2>
@@ -171,13 +171,13 @@ function NptReasonModal({ open, row, onClose, onSaved }) {
           />
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3">
-          <span className="text-xs text-slate-500">{selected.size} selected</span>
-          <div className="flex gap-2">
+        <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <span className="shrink-0 text-xs text-slate-500">{selected.size} selected</span>
+          <div className="flex flex-1 justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              className="min-h-[44px] rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium"
             >
               Cancel
             </button>
@@ -191,7 +191,7 @@ function NptReasonModal({ open, row, onClose, onSaved }) {
                 saveMutation.mutate();
               }}
               disabled={saveMutation.isPending}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              className="min-h-[44px] flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60 sm:flex-none"
             >
               {saveMutation.isPending ? "Saving…" : "Confirm"}
             </button>
@@ -308,6 +308,43 @@ export default function DailyNptList() {
     URL.revokeObjectURL(a.href);
   }
 
+  function renderAction(row, full = false) {
+    const base = `inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-semibold ${
+      full ? "w-full justify-center py-2.5 text-[13px]" : "py-1.5"
+    }`;
+    if (row.is_open || row.can_confirm_reason === false) {
+      return (
+        <span className={`${base} border border-amber-200 bg-amber-100 text-amber-800`} title="Waiting for NPT to end">
+          Waiting for end
+        </span>
+      );
+    }
+    if (row.npt_reason) {
+      return (
+        <button
+          type="button"
+          onClick={() => setEditing(row)}
+          title="Reason confirmed — click to edit"
+          className={`${base} bg-emerald-600 text-white hover:bg-emerald-700`}
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Confirmed
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(row)}
+        disabled={!row.id}
+        className={`${base} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50`}
+      >
+        <ListChecks className="h-3.5 w-3.5" />
+        Confirm Reason
+      </button>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -408,7 +445,55 @@ export default function DailyNptList() {
         </section>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      {/* mobile: smart card list */}
+      <div className="space-y-2.5 md:hidden">
+        {isLoading || (isFetching && rows.length === 0) ? (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">Loading…</div>
+        ) : filteredRows.length === 0 ? (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+            No NPT records for {categoryFilter || date}.
+          </div>
+        ) : (
+          filteredRows.map((row) => (
+            <div
+              key={row.start_log_id || row.id}
+              className={`rounded-xl border p-3 shadow-sm ${
+                row.is_open ? "border-amber-300 bg-amber-50/70" : "border-slate-200 bg-white"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 text-[15px] font-bold text-slate-900">
+                    {row.machin_id ? `M${row.machin_id}` : "—"}
+                  </span>
+                  <span className="truncate rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                    {row.category || "—"}
+                  </span>
+                </div>
+                <span className="shrink-0 font-mono text-[15px] font-bold text-slate-900">
+                  {row.is_open ? "running" : formatNptHour(row.npt_hour)}
+                </span>
+              </div>
+              <div className="mt-1 text-[12px] tabular-nums text-slate-500">
+                {row.start_at
+                  ? `${row.start_at} → ${row.is_open ? "In progress" : row.stop_at || "—"}`
+                  : "—"}
+                {row.start_log_id ? ` · #${row.start_log_id}` : ""}
+              </div>
+              {row.npt_reason ? (
+                <div className="mt-1 text-[12.5px] font-semibold text-slate-700">{row.npt_reason}</div>
+              ) : null}
+              {row.remarks ? (
+                <div className="mt-0.5 text-[12px] text-slate-500">📝 {row.remarks}</div>
+              ) : null}
+              <div className="mt-2.5">{renderAction(row, true)}</div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* desktop: full table */}
+      <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white md:block">
         <table className="min-w-full divide-y divide-slate-100 text-sm">
           <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
             <tr>
@@ -471,36 +556,7 @@ export default function DailyNptList() {
                   <td className="px-4 py-3 max-w-xs truncate text-slate-600" title={row.remarks}>
                     {row.remarks || "—"}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    {row.is_open || row.can_confirm_reason === false ? (
-                      <span
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800"
-                        title="Waiting for NPT to end"
-                      >
-                        Waiting for end
-                      </span>
-                    ) : row.npt_reason ? (
-                      <button
-                        type="button"
-                        onClick={() => setEditing(row)}
-                        title="Reason confirmed — click to edit"
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        Confirmed
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setEditing(row)}
-                        disabled={!row.id}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-                      >
-                        <ListChecks className="h-3.5 w-3.5" />
-                        Confirm Reason
-                      </button>
-                    )}
-                  </td>
+                  <td className="px-4 py-3 text-right">{renderAction(row)}</td>
                 </tr>
               ))
             )}
