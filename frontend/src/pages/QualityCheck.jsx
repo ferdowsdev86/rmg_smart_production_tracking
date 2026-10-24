@@ -494,27 +494,34 @@ export default function QualityCheck() {
     }
     setSaving(true);
     try {
-      for (const p of targets) {
-        const e = getEdit(p);
-        const remaining = Math.max(0, p.qty - partTotalPass(p));
-        const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
-        const isCarrier = p === carrier;
-        const { data } = await api.post("/automation/quality/check/", {
+      // ONE save = ONE day_qc_diffect row (the carrier's counts); every
+      // selected defect type goes along with ITS part's qr/barcode and lands
+      // as an individual hour_quality_diffect row linked by day_qc_diffect_id.
+      const e = getEdit(carrier);
+      const remaining = Math.max(0, carrier.qty - partTotalPass(carrier));
+      const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
+      const defectsPayload = targets.flatMap((p) =>
+        Object.entries(getEdit(p).sel || {}).map(([sl, qty]) => ({
+          sl: Number(sl),
+          qty,
           barcode: p.barcode,
-          defect: isCarrier ? Math.max(0, (p.defect || 0) + sessionD) : p.defect || 0,
-          reject: isCarrier ? Math.max(0, (p.reject || 0) + sessionR) : p.reject || 0,
-          mode: "set",
-          check_qty: isCarrier ? qcCheck : 0,
-          defects: Object.entries(e.sel || {}).map(([sl, qty]) => ({ sl: Number(sl), qty })),
-        });
-        if (data.qc_saved === false) {
-          toast.error(`${p.part_name}: ${data.warning || "QC history was NOT saved — please save again."}`);
-          return;
-        }
-        toast.success(
-          `${p.part_name}: checked ${data.check_qty ?? qcCheck}, pass ${data.pass_qty}, defect ${data.defect}, reject ${data.reject}`,
-        );
+        })),
+      );
+      const { data } = await api.post("/automation/quality/check/", {
+        barcode: carrier.barcode,
+        defect: Math.max(0, (carrier.defect || 0) + sessionD),
+        reject: Math.max(0, (carrier.reject || 0) + sessionR),
+        mode: "set",
+        check_qty: qcCheck,
+        defects: defectsPayload,
+      });
+      if (data.qc_saved === false) {
+        toast.error(data.warning || "QC history was NOT saved — please save again.");
+        return;
       }
+      toast.success(
+        `Bundle: checked ${data.check_qty ?? qcCheck}, pass ${data.pass_qty}, defect ${data.defect}, reject ${data.reject}`,
+      );
       resetForNextScan();
     } catch (err) {
       toast.error(err?.response?.data?.detail || err.message || "Failed to save quality check");

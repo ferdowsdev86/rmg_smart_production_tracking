@@ -145,11 +145,33 @@ def _prev_pass_many(barcodes: list[str]) -> dict[str, int]:
 
 
 def _group_total_pass(bundle: dict, barcode: str | None = None) -> int:
-    """Pass already recorded today for THIS part barcode — new pass =
-    qty - defect - reject - this (so re-checks / repairs never double count,
-    and other bundles of the same style/PO are not affected)."""
+    """Pass already recorded today for THIS physical bundle: new rows are
+    keyed by bcss_id (bundle_id stays NULL), legacy rows by the part
+    barcodes — both are counted, per save (GROUP BY created_at)."""
+    from zoneinfo import ZoneInfo
+
+    from django.utils import timezone as _tz
+
     key = str(barcode or bundle.get("barcode") or "")
-    return _prev_pass_many([key]).get(key, 0) if key else 0
+    bcss = bundle.get("bcss_id") or 0
+    sibs = _sibling_parts(key) if key else []
+    bcs = [p["barcode"] for p in sibs] or ([key] if key else [])
+    if not bcs and not bcss:
+        return 0
+    today = _tz.now().astimezone(ZoneInfo("Asia/Dhaka")).date()
+    try:
+        marks = ", ".join(["%s"] * len(bcs)) or "''"
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(SUM(p), 0) FROM ("
+                "SELECT created_at, MAX(pass_qty) AS p FROM day_qc_diffect "
+                f"WHERE date = %s AND (bcss_id = %s OR bundle_id IN ({marks})) "
+                "GROUP BY created_at) t",
+                [today, bcss, *bcs],
+            )
+            return int(cursor.fetchone()[0] or 0)
+    except Exception:
+        return 0
 
 
 class QualityBundleView(APIView):
@@ -172,16 +194,16 @@ class QualityBundleView(APIView):
             {"barcode": barcode, "part_name": bundle.get("part_name") or "—"}
         ]
         rows_by_barcode = _count_rows_many([p["barcode"] for p in parts])
-        # Pass already recorded today per PART barcode —
-        # new pass for a part = qty - defect - reject - its own previous pass.
-        prev_pass = _prev_pass_many([p["barcode"] for p in parts])
+        # Pass is bundle-level now (one day_qc row per save, keyed by
+        # bcss_id; legacy per-part rows still counted inside the helper).
+        bundle_pass = _group_total_pass(bundle, barcode)
         part_list = []
         for p in parts:
             summary = _part_summary(
                 p["barcode"], p["part_name"], qty,
                 rows=rows_by_barcode.get(p["barcode"], []),
             )
-            summary["total_pass"] = prev_pass.get(p["barcode"], 0)
+            summary["total_pass"] = bundle_pass
             part_list.append(summary)
 
         # Today's QC history for the whole bundle (so defects stay visible
@@ -203,11 +225,12 @@ class QualityBundleView(APIView):
                 cursor.execute(
                     f"SELECT COALESCE(MAX(f),0), COALESCE(MAX(rp),0), "
                     f"COALESCE(MAX(rj),0), COALESCE(MAX(rjp),0) FROM ("
-                    f"SELECT bundle_id, SUM(defect_qty) f, SUM(diffect_to_pass) rp, "
-                    f"SUM(reject_qty) rj, SUM(reject_to_pass) rjp "
-                    f"FROM day_qc_diffect WHERE date=%s AND bundle_id IN ({marks}) "
-                    f"GROUP BY bundle_id) t",
-                    [today, *bcs],
+                    f"SELECT COALESCE(bcss_id, bundle_id) grp, SUM(defect_qty) f, "
+                    f"SUM(diffect_to_pass) rp, SUM(reject_qty) rj, SUM(reject_to_pass) rjp "
+                    f"FROM day_qc_diffect WHERE date=%s AND "
+                    f"(bcss_id = %s OR bundle_id IN ({marks})) "
+                    f"GROUP BY COALESCE(bcss_id, bundle_id)) t",
+                    [today, bundle.get("bcss_id") or 0, *bcs],
                 )
                 f, rp, rj, rjp = cursor.fetchone()
                 today_hist.update(
@@ -215,16 +238,19 @@ class QualityBundleView(APIView):
                     reject=int(rj or 0), reject_repaired=int(rjp or 0),
                 )
                 cursor.execute(
-                    f"SELECT d.part_no, h.diffect_name, COALESCE(SUM(h.diffect_qty),0) "
+                    f"SELECT COALESCE(h.qrcode, d.bundle_id), h.diffect_name, "
+                    f"COALESCE(SUM(h.diffect_qty),0) "
                     f"FROM hour_quality_diffect h "
                     f"JOIN day_qc_diffect d ON d.id = h.day_qc_diffect_id "
-                    f"WHERE d.date=%s AND d.bundle_id IN ({marks}) "
+                    f"WHERE d.date=%s AND (d.bcss_id = %s OR d.bundle_id IN ({marks})) "
                     f"AND h.diffect_qty > 0 AND h.diffect_name IS NOT NULL "
-                    f"GROUP BY d.part_no, h.diffect_name ORDER BY 3 DESC",
-                    [today, *bcs],
+                    f"GROUP BY 1, h.diffect_name ORDER BY 3 DESC",
+                    [today, bundle.get("bcss_id") or 0, *bcs],
                 )
+                name_by_bc = {str(pp["barcode"]): pp["part_name"] for pp in parts}
                 today_hist["types"] = [
-                    {"part": r[0] or "—", "name": r[1], "qty": int(r[2])}
+                    {"part": name_by_bc.get(str(r[0] or ""), str(r[0] or "—")),
+                     "name": r[1], "qty": int(r[2])}
                     for r in cursor.fetchall()
                 ]
         except Exception:
@@ -243,7 +269,7 @@ class QualityBundleView(APIView):
                 "start_ply": bundle.get("start_ply"),
                 "end_ply": bundle.get("end_ply"),
                 "qty": qty,
-                "total_pass": prev_pass.get(barcode, 0),
+                "total_pass": bundle_pass,
                 "parts": part_list,
                 "today": today_hist,
             }
@@ -550,6 +576,7 @@ def _save_day_qc_diffect(
                 pass
 
         # Resolve selected defect types against qc_diffect (authoritative).
+        # Each entry keeps the qr/barcode of the PART it was selected on.
         entries: list[tuple] = []
         if defects:
             sls = [int(d.get("sl") or 0) for d in defects if int(d.get("sl") or 0) > 0]
@@ -566,8 +593,9 @@ def _save_day_qc_diffect(
             for d in defects:
                 sl = int(d.get("sl") or 0)
                 dqty = max(0, int(d.get("qty") or 0))
+                qr = str(d.get("barcode") or barcode)[:100]
                 if sl in names and dqty > 0:
-                    entries.append((sl, names[sl][0], names[sl][1], dqty))
+                    entries.append((sl, names[sl][0], names[sl][1], dqty, qr))
         # New DEFECTIVE GARMENTS this save = the manual counter's delta —
         # the user sets it with +/- and it saves AS ENTERED. Selected defect
         # types are the name-wise breakdown only (one garment can carry
@@ -575,14 +603,10 @@ def _save_day_qc_diffect(
         garment_delta = max(0, total_defect - prev_defect)
         typeless_new = 0 if entries else garment_delta
         new_defect_total = garment_delta
-        if len(entries) == 1:
-            d_sl, d_code, d_name = entries[0][0], entries[0][1], entries[0][2]
-        elif entries:
-            d_sl = None
-            d_code = (", ".join(str(e[1]) for e in entries))[:255]
-            d_name = (", ".join(str(e[2]) for e in entries))[:500]
-        else:
-            d_sl = d_code = d_name = None
+        # The day row carries only the save TOTALS — bundle_id/part_no and
+        # defect sl/code/name stay NULL; the defect types live in
+        # hour_quality_diffect (one row each, with that part's qrcode).
+        d_sl = d_code = d_name = None
 
         if pass_qty is None:
             pass_qty = max(0, qty - total_defect - total_reject)
@@ -596,9 +620,9 @@ def _save_day_qc_diffect(
             if qc_check is None:
                 cursor.execute(
                     "SELECT COALESCE(SUM(p), 0) FROM (SELECT MAX(pass_qty) AS p "
-                    "FROM day_qc_diffect WHERE date = %s AND bundle_id = %s "
-                    "GROUP BY created_at) t",
-                    [now.date(), barcode],
+                    "FROM day_qc_diffect WHERE date = %s AND "
+                    "(bcss_id = %s OR bundle_id = %s) GROUP BY created_at) t",
+                    [now.date(), bundle.get("bcss_id") or 0, barcode],
                 )
                 qc_check = max(0, qty - int(cursor.fetchone()[0] or 0))
 
@@ -617,9 +641,9 @@ def _save_day_qc_diffect(
                     (bundle.get("stl_no") or "")[:100] or None,
                     floor,
                     line,
-                    barcode,
+                    "",
                     bundle.get("bcss_id"),
-                    (bundle.get("part_name") or "")[:100] or None,
+                    None,
                     d_sl,
                     d_code,
                     d_name,
@@ -644,20 +668,24 @@ def _save_day_qc_diffect(
 
             # Defect-name-wise breakdown → hour_quality_diffect (one row per
             # defect type of this save, all linked to the single day row).
-            ledger = [(sl, code, name, dqty, 0, 0, 0) for (sl, code, name, dqty) in entries]
+            ledger = [
+                (sl, code, name, dqty, 0, 0, 0, qr)
+                for (sl, code, name, dqty, qr) in entries
+            ]
             if not entries or defect_to_pass or reject_delta or reject_to_pass:
                 ledger.append(
                     (None, None, None, typeless_new,
-                     int(defect_to_pass), reject_delta, int(reject_to_pass))
+                     int(defect_to_pass), reject_delta, int(reject_to_pass),
+                     barcode[:100])
                 )
-            for sl, code, name, dq, dp, rq, rp in ledger:
+            for sl, code, name, dq, dp, rq, rp, qr in ledger:
                 try:
                     cursor.execute(
                         "INSERT INTO hour_quality_diffect "
-                        "(day_qc_diffect_id, diffect_sl, diffect_code, diffect_name, "
+                        "(day_qc_diffect_id, qrcode, diffect_sl, diffect_code, diffect_name, "
                         "diffect_qty, diffect_pass, reject_qty, reject_pass, created_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                        [dqd_id, sl, code, name, dq, dp, rq, rp,
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        [dqd_id, qr, sl, code, name, dq, dp, rq, rp,
                          now.strftime("%Y-%m-%d %H:%M:%S")],
                     )
                 except Exception:
