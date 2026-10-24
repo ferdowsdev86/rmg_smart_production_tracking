@@ -174,6 +174,31 @@ def _group_total_pass(bundle: dict, barcode: str | None = None) -> int:
         return 0
 
 
+def _bundle_net_defect_reject(bundle: dict, barcode: str | None = None) -> tuple[int, int]:
+    """CURRENT defect / reject of the physical bundle from day_qc_diffect,
+    summed per bcss_id (legacy per-part rows counted by their barcodes):
+    defect = SUM(defect_qty) - SUM(diffect_to_pass), reject likewise."""
+    key = str(barcode or bundle.get("barcode") or "")
+    bcss = bundle.get("bcss_id") or 0
+    sibs = _sibling_parts(key) if key else []
+    bcs = [p["barcode"] for p in sibs] or ([key] if key else [])
+    if not bcs and not bcss:
+        return 0, 0
+    try:
+        marks = ", ".join(["%s"] * len(bcs)) or "''"
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(SUM(defect_qty),0) - COALESCE(SUM(diffect_to_pass),0), "
+                "COALESCE(SUM(reject_qty),0) - COALESCE(SUM(reject_to_pass),0) "
+                f"FROM day_qc_diffect WHERE (bcss_id = %s OR bundle_id IN ({marks}))",
+                [bcss, *bcs],
+            )
+            d, r = cursor.fetchone()
+            return max(0, int(d or 0)), max(0, int(r or 0))
+    except Exception:
+        return 0, 0
+
+
 class QualityBundleView(APIView):
     """GET quality/bundle/?barcode= — header + per-part QC state."""
 
@@ -197,6 +222,9 @@ class QualityBundleView(APIView):
         # Pass is bundle-level now (one day_qc row per save, keyed by
         # bcss_id; legacy per-part rows still counted inside the helper).
         bundle_pass = _group_total_pass(bundle, barcode)
+        # Defect / reject shown from day_qc_diffect per bcss_id (net:
+        # found - repaired) — machin_production_count is no longer the source.
+        bundle_defect, bundle_reject = _bundle_net_defect_reject(bundle, barcode)
         part_list = []
         for p in parts:
             summary = _part_summary(
@@ -270,6 +298,8 @@ class QualityBundleView(APIView):
                 "end_ply": bundle.get("end_ply"),
                 "qty": qty,
                 "total_pass": bundle_pass,
+                "defect": bundle_defect,
+                "reject": bundle_reject,
                 "parts": part_list,
                 "today": today_hist,
             }
@@ -343,8 +373,10 @@ class QualityCheckView(APIView):
                     ],
                 )
             rows = _count_rows(barcode)
-        current_defect = sum(int(r["defect"] or 0) for r in rows)
-        current_reject = sum(int(r["reject"] or 0) for r in rows)
+        # CURRENT defect/reject from day_qc_diffect per bcss_id (net) — the
+        # same source the screen shows; machin_production_count no longer
+        # drives the counters.
+        current_defect, current_reject = _bundle_net_defect_reject(bundle, barcode)
         new_defect = defect if mode == "set" else current_defect + defect
         new_reject = reject if mode == "set" else current_reject + reject
         # Once the group's total pass reaches the bundle qty, no further

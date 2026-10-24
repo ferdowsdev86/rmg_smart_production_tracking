@@ -412,17 +412,15 @@ export default function QualityCheck() {
     checkQty: Math.min(Math.max(0, p.qty - partTotalPass(p)), bundleRemaining),
     ...(edits[p.barcode] || {}),
   });
-  // ONE manual Defect / Reject count for this save session — it applies to
-  // EVERY part that has defect types selected (selecting types never adds).
-  // Saved garment counts: every save writes the SAME session count to each
-  // selected part, so the bundle's defective garments = the MAX over parts
-  // (a sum would double-count one garment recorded on two parts).
+  // ONE manual Defect / Reject count for this save session. The saved
+  // defect/reject comes from day_qc_diffect summed per bcss_id (net:
+  // found - repaired) — served as bundle.defect / bundle.reject.
   const bundleView = bundle?.parts?.length
     ? {
         pass: bundlePass,
         remaining: bundleRemaining,
-        defect: Math.max(0, Math.max(0, ...bundle.parts.map((p) => p.defect || 0)) + sessionD),
-        reject: Math.max(0, Math.max(0, ...bundle.parts.map((p) => p.reject || 0)) + sessionR),
+        defect: Math.max(0, (bundle.defect || 0) + sessionD),
+        reject: Math.max(0, (bundle.reject || 0) + sessionR),
       }
     : null;
   const updateEdit = (p, patch) =>
@@ -461,16 +459,9 @@ export default function QualityCheck() {
       toast.error("Select a part first.");
       return;
     }
-    // ONE part (the carrier) carries the garment-level counts — checked /
-    // pass / defect / reject are physical garments counted ONCE per bundle
-    // save; the other parts only record their defect types. Otherwise every
-    // extra part double-counted the same garments in the reports.
-    const carrier =
-      sessionD < 0 || sessionR < 0
-        ? targets.find(
-            (p) => (sessionD < 0 && (p.defect || 0) > 0) || (sessionR < 0 && (p.reject || 0) > 0),
-          ) || targets[0]
-        : targets[0];
+    // ONE part (the carrier) carries the garment-level counts — the day_qc
+    // row is bundle-level (bcss_id) so any part works as carrier.
+    const carrier = targets[0];
     // validate before saving anything
     {
       const e = getEdit(carrier);
@@ -509,8 +500,8 @@ export default function QualityCheck() {
       );
       const { data } = await api.post("/automation/quality/check/", {
         barcode: carrier.barcode,
-        defect: Math.max(0, (carrier.defect || 0) + sessionD),
-        reject: Math.max(0, (carrier.reject || 0) + sessionR),
+        defect: Math.max(0, (bundle?.defect || 0) + sessionD),
+        reject: Math.max(0, (bundle?.reject || 0) + sessionR),
         mode: "set",
         check_qty: qcCheck,
         defects: defectsPayload,
@@ -741,17 +732,6 @@ export default function QualityCheck() {
                     {selPcs > 0 ? (
                       <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? "bg-white text-amber-600" : "bg-amber-500 text-white"}`} title="Selected defects (unsaved)">
                         ✎{selPcs}
-                      </span>
-                    ) : null}
-                    {part.defect + part.reject > 0 ? (
-                      <span
-                        className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                          active
-                            ? "bg-white/20 text-white"
-                            : "bg-amber-100 text-amber-700"
-                        }`}
-                      >
-                        D{part.defect}/R{part.reject}
                       </span>
                     ) : null}
                   </button>
