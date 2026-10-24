@@ -767,6 +767,25 @@ export default function QualityCheck() {
                 </button>
               </div>
             </div>
+
+            {/* Today's QC history — defects stay visible after repair */}
+            {bundle.today && (bundle.today.found > 0 || bundle.today.reject > 0) ? (
+              <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl bg-slate-50 px-3 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200">
+                <span className="font-bold text-slate-700">Today:</span>
+                <span className="text-amber-700">Found {bundle.today.found} defect</span>
+                {bundle.today.repaired > 0 ? (
+                  <span className="text-sky-700">· Repaired {bundle.today.repaired}</span>
+                ) : null}
+                {bundle.today.reject > 0 ? (
+                  <span className="text-rose-700">· Reject {bundle.today.reject}</span>
+                ) : null}
+                {(bundle.today.types || []).map((t, i) => (
+                  <span key={i} className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                    {t.part}: {t.name} ×{t.qty}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {/* Selected part detail (with machine id where it was scanned) */}

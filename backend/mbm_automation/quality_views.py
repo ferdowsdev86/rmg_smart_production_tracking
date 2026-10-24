@@ -183,6 +183,53 @@ class QualityBundleView(APIView):
             )
             summary["total_pass"] = prev_pass.get(p["barcode"], 0)
             part_list.append(summary)
+
+        # Today's QC history for the whole bundle (so defects stay visible
+        # after a repair brings the live counter back to 0): found/repaired/
+        # reject totals + defect types per part from day_qc/hour_quality.
+        today_hist = {"found": 0, "repaired": 0, "reject": 0, "reject_repaired": 0, "types": []}
+        try:
+            from zoneinfo import ZoneInfo
+
+            from django.utils import timezone as _tz
+
+            today = _tz.now().astimezone(ZoneInfo("Asia/Dhaka")).date()
+            bcs = [p["barcode"] for p in parts]
+            marks = ", ".join(["%s"] * len(bcs))
+            with connections["default"].cursor() as cursor:
+                # one save writes the SAME garment count to every selected
+                # part, so the bundle's figure is the MAX of per-part sums
+                # (a plain sum would count one garment once per part)
+                cursor.execute(
+                    f"SELECT COALESCE(MAX(f),0), COALESCE(MAX(rp),0), "
+                    f"COALESCE(MAX(rj),0), COALESCE(MAX(rjp),0) FROM ("
+                    f"SELECT bundle_id, SUM(defect_qty) f, SUM(diffect_to_pass) rp, "
+                    f"SUM(reject_qty) rj, SUM(reject_to_pass) rjp "
+                    f"FROM day_qc_diffect WHERE date=%s AND bundle_id IN ({marks}) "
+                    f"GROUP BY bundle_id) t",
+                    [today, *bcs],
+                )
+                f, rp, rj, rjp = cursor.fetchone()
+                today_hist.update(
+                    found=int(f or 0), repaired=int(rp or 0),
+                    reject=int(rj or 0), reject_repaired=int(rjp or 0),
+                )
+                cursor.execute(
+                    f"SELECT d.part_no, h.diffect_name, COALESCE(SUM(h.diffect_qty),0) "
+                    f"FROM hour_quality_diffect h "
+                    f"JOIN day_qc_diffect d ON d.id = h.day_qc_diffect_id "
+                    f"WHERE d.date=%s AND d.bundle_id IN ({marks}) "
+                    f"AND h.diffect_qty > 0 AND h.diffect_name IS NOT NULL "
+                    f"GROUP BY d.part_no, h.diffect_name ORDER BY 3 DESC",
+                    [today, *bcs],
+                )
+                today_hist["types"] = [
+                    {"part": r[0] or "—", "name": r[1], "qty": int(r[2])}
+                    for r in cursor.fetchall()
+                ]
+        except Exception:
+            pass
+
         return Response(
             {
                 "found": True,
@@ -197,6 +244,7 @@ class QualityBundleView(APIView):
                 "qty": qty,
                 "total_pass": prev_pass.get(barcode, 0),
                 "parts": part_list,
+                "today": today_hist,
             }
         )
 
