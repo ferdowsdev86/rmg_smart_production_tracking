@@ -151,6 +151,72 @@ def _slim_device_response(payload: dict) -> dict:
     return {k: v for k, v in payload.items() if k not in _DEVICE_RESPONSE_DROP}
 
 
+_DEPT_NAME_CACHE: dict[int, str] = {}
+
+
+def _hr_department_name(dept_id) -> str:
+    """hr_department_new name (uppercased, cached) for a department id."""
+    try:
+        dept_id = int(dept_id or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not dept_id:
+        return ""
+    if dept_id in _DEPT_NAME_CACHE:
+        return _DEPT_NAME_CACHE[dept_id]
+    name = ""
+    try:
+        from django.db import connections
+
+        with connections["cuttingedge"].cursor() as cursor:
+            cursor.execute(
+                "SELECT hr_department_name FROM hr_department_new "
+                "WHERE hr_department_id = %s",
+                [dept_id],
+            )
+            r = cursor.fetchone()
+            name = (r[0] or "").strip().upper() if r else ""
+    except Exception:
+        name = ""
+    _DEPT_NAME_CACHE[dept_id] = name
+    return name
+
+
+def _npt_stage_from_card(flag1_value) -> int:
+    """3-stage NPT: the device sends flag4=1 with the responder's RFID in
+    flag1 — the SERVER classifies the stage from the card's HR department:
+
+      flag1 = 0 / 00000                    → 1 (operator call)
+      ENGINEERING & FACILITIES or CUTTING  → 2 (responder present)
+      INDUSTRIAL ENGINEERING               → 3 (NPT ended by IE)
+
+    Unknown card / other department stays stage 1."""
+    try:
+        card = int(flag1_value or 0)
+    except (TypeError, ValueError):
+        card = 0
+    if card <= 0:
+        return 1
+    from mbm_automation.hr_lookup import lookup_hr_profile
+
+    profile = lookup_hr_profile(str(card)) or lookup_hr_profile(str(card).zfill(10))
+    name = _hr_department_name((profile or {}).get("hr_new_department_id"))
+    if "INDUSTRIAL ENGINEERING" in name:
+        return 3
+    if "ENGINEERING & FACILITIES" in name or "CUTTING" in name:
+        return 2
+    return 1
+
+
+def _apply_npt_stage_response(body: dict, row) -> dict:
+    """On a flag4 NPT event the device reads `npt` as the stage confirmation
+    (1 call / 2 responder present / 3 ended) instead of the day duration."""
+    stage = int(getattr(row, "flag4", 0) or 0)
+    if stage >= 1:
+        body["npt"] = stage
+    return body
+
+
 def _npt_stage_confirmations(row) -> dict:
     """Server confirmation for the 3-stage NPT protocol: echo the stage back.
     flag4 → MachineNPT, flag5 → MaterialNPT, flag7 → TechnicalNPT
@@ -461,6 +527,12 @@ class IotDataStoreView(APIView):
             else:
                 create_kwargs[flag] = int(payload.get(flag) or 0)
 
+        # 3-stage NPT: flag4 arrives as 1 with the responder's card in flag1;
+        # the stage (1 call / 2 responder / 3 ended) is decided here from the
+        # card's HR department and stored, so NPT pairing sees the real stage.
+        if create_kwargs.get("flag4") == 1:
+            create_kwargs["flag4"] = _npt_stage_from_card(create_kwargs.get("flag1"))
+
         try:
             row = SewingLog.objects.create(**create_kwargs)
         except Exception as exc:
@@ -503,11 +575,14 @@ class IotDataStoreView(APIView):
         machin_user = (row.machin_user or "").strip()
         if machin_id is None or not machin_user:
             return Response(
-                _slim_device_response(
-                    {
-                        **_post_insert_response(row, response_user=machin_user, rfid_payload=None),
-                        **_npt_stage_confirmations(row),
-                    }
+                _apply_npt_stage_response(
+                    _slim_device_response(
+                        {
+                            **_post_insert_response(row, response_user=machin_user, rfid_payload=None),
+                            **_npt_stage_confirmations(row),
+                        }
+                    ),
+                    row,
                 ),
                 status=status.HTTP_201_CREATED,
             )
@@ -528,11 +603,14 @@ class IotDataStoreView(APIView):
             rfid_payload["employee_name"] = identity["employee_name"]
             rfid_payload["designation"] = identity["designation"]
         return Response(
-            _slim_device_response(
-                {
-                    **_post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
-                    **_npt_stage_confirmations(row),
-                }
+            _apply_npt_stage_response(
+                _slim_device_response(
+                    {
+                        **_post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
+                        **_npt_stage_confirmations(row),
+                    }
+                ),
+                row,
             ),
             status=status.HTTP_201_CREATED,
         )
