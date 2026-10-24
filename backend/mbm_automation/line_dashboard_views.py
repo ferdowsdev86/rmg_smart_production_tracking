@@ -1035,6 +1035,16 @@ def _ampm(dt) -> str:
 
 
 STAFF_BREAK_SECONDS = 3600  # 1 hour lunch break per staff
+BREAK_COUNTS_FROM_HOUR = 14  # lunch ends 2 PM — before that no break is shown/deducted
+
+
+def _break_seconds(work: int, end_dt) -> int:
+    """The 1h lunch break counts only once the span reaches 2 PM — before
+    that (live view in the morning, or someone who left before lunch) no
+    break is shown or deducted."""
+    if end_dt is None or end_dt.hour < BREAK_COUNTS_FROM_HOUR:
+        return 0
+    return min(work, STAFF_BREAK_SECONDS)
 
 # floor_overview polls every 8s and also needs punches now — cache the
 # (fairly heavy) summary for a short while per date.
@@ -1130,7 +1140,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             # only sessions over 2 minutes count as a real shift
             if work <= 120:
                 continue
-            brk = min(work, STAFF_BREAK_SECONDS)
+            brk = _break_seconds(work, end_dt)
             name = (profile or {}).get("operator_name") or _operator_display_name(uid)
             rows.append(
                 {
@@ -1168,7 +1178,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
     persons: dict[str, dict] = {}
     for uid, p in person_raw.items():
         work = max(0, int((p["end_dt"] - p["in_dt"]).total_seconds()))
-        brk = min(work, STAFF_BREAK_SECONDS)
+        brk = _break_seconds(work, p["end_dt"])
         persons[uid] = {
             "name": p["name"],
             "machines": p["machines"],
@@ -1186,7 +1196,7 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
         eight = m["in_dt"].replace(hour=8, minute=0, second=0, microsecond=0)
         start_dt = max(m["in_dt"], eight)
         work = max(0, int((m["end_dt"] - start_dt).total_seconds()))
-        brk = min(work, STAFF_BREAK_SECONDS)
+        brk = _break_seconds(work, m["end_dt"])
         machine_hours[mid] = {
             "still_in": m["still_in"],
             "operators": [r["name"] for r in machines.get(mid, [])],
