@@ -461,21 +461,34 @@ export default function QualityCheck() {
       toast.error("Select a part first.");
       return;
     }
-    // validate every part before saving anything
-    for (const p of targets) {
-      const e = getEdit(p);
-      const remaining = Math.max(0, p.qty - partTotalPass(p));
+    // ONE part (the carrier) carries the garment-level counts — checked /
+    // pass / defect / reject are physical garments counted ONCE per bundle
+    // save; the other parts only record their defect types. Otherwise every
+    // extra part double-counted the same garments in the reports.
+    const carrier =
+      sessionD < 0 || sessionR < 0
+        ? targets.find(
+            (p) => (sessionD < 0 && (p.defect || 0) > 0) || (sessionR < 0 && (p.reject || 0) > 0),
+          ) || targets[0]
+        : targets[0];
+    // validate before saving anything
+    {
+      const e = getEdit(carrier);
+      const remaining = Math.max(0, carrier.qty - partTotalPass(carrier));
       const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
       if (Math.max(0, sessionD) + Math.max(0, sessionR) > qcCheck) {
-        toast.error(`${p.part_name}: defect + reject cannot exceed QC check qty.`);
+        toast.error(`${carrier.part_name}: defect + reject cannot exceed QC check qty.`);
         return;
       }
       if (Math.max(0, -sessionD) + Math.max(0, -sessionR) > qcCheck) {
-        toast.error(`${p.part_name}: repair cannot exceed QC check qty — a repaired piece must be re-checked to pass.`);
+        toast.error(`${carrier.part_name}: repair cannot exceed QC check qty — a repaired piece must be re-checked to pass.`);
         return;
       }
-      if (sessionD > 0 && Object.keys(e.sel || {}).length === 0) {
-        toast.error(`${p.part_name}: select WHICH defect was found (defect type).`);
+      if (
+        sessionD > 0 &&
+        !targets.some((p) => Object.keys(getEdit(p).sel || {}).length > 0)
+      ) {
+        toast.error("Select WHICH defect was found (defect type).");
         return;
       }
     }
@@ -485,12 +498,13 @@ export default function QualityCheck() {
         const e = getEdit(p);
         const remaining = Math.max(0, p.qty - partTotalPass(p));
         const qcCheck = Math.min(e.checkQty ?? remaining, remaining);
+        const isCarrier = p === carrier;
         const { data } = await api.post("/automation/quality/check/", {
           barcode: p.barcode,
-          defect: Math.max(0, (p.defect || 0) + sessionD),
-          reject: Math.max(0, (p.reject || 0) + sessionR),
+          defect: isCarrier ? Math.max(0, (p.defect || 0) + sessionD) : p.defect || 0,
+          reject: isCarrier ? Math.max(0, (p.reject || 0) + sessionR) : p.reject || 0,
           mode: "set",
-          check_qty: qcCheck,
+          check_qty: isCarrier ? qcCheck : 0,
           defects: Object.entries(e.sel || {}).map(([sl, qty]) => ({ sl: Number(sl), qty })),
         });
         if (data.qc_saved === false) {

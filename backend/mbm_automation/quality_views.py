@@ -324,9 +324,13 @@ class QualityCheckView(APIView):
         # defect / reject can be recorded.
         total_pass = _group_total_pass(bundle, barcode)
         remaining = max(0, qty - total_pass)
-        # Partial check: pieces inspected in THIS save (default = all remaining)
+        # Partial check: pieces inspected in THIS save (default = all
+        # remaining). check_qty=0 is VALID — a type-only save from a part
+        # that does not carry the garment counts ("or" would turn 0 into
+        # remaining and double-count the bundle).
+        raw_check = request.data.get("check_qty")
         try:
-            check_qty = int(request.data.get("check_qty") or remaining)
+            check_qty = remaining if raw_check in (None, "") else int(raw_check)
         except (TypeError, ValueError):
             return Response({"detail": "check_qty must be a number."}, status=400)
         check_qty = max(0, min(check_qty, remaining))
