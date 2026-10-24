@@ -16,6 +16,16 @@ const pct = (n) => `${(n ?? 0).toFixed ? n.toFixed(2) : n}%`;
 
 /* Day Efficiency Report — modelled on the ERP sheet, from our own data:
    plan (ERP targets) vs actual (staff punches + QC output), SAH-based. */
+/** Small labelled value for mobile report cards. */
+function MStat({ label, value, tone = "" }) {
+  return (
+    <div className="rounded-lg bg-slate-50 px-2 py-1.5 text-center">
+      <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`text-[14px] font-bold tabular-nums ${tone || "text-slate-800"}`}>{value}</div>
+    </div>
+  );
+}
+
 const TABS = [
   { id: "efficiency", label: "Efficiency Report" },
   { id: "manhour", label: "Man Hour Details" },
@@ -272,7 +282,40 @@ export default function Reports() {
               Date: <b className="text-slate-900">{from === to ? from : `${from} — ${to}`}</b>
             </div>
           </div>
-          <div className="overflow-x-auto">
+          {/* mobile: card per line/day */}
+          <div className="space-y-2 p-3 md:hidden">
+            {rows.map((r, i) => (
+              <div key={`pm-${r.date}-${r.line}-${i}`} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-slate-900">{r.line}</span>
+                  <span className="text-[12px] tabular-nums text-slate-500">{r.date}</span>
+                </div>
+                <div className="mt-0.5 truncate text-[12px] text-slate-500" title={r.styles}>{r.styles}</div>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  <MStat label="Target" value={fmt(r.plan_target)} />
+                  <MStat label="Production" value={fmt(r.output)} />
+                  <MStat label="Achieve %" value={`${r.ach_pct}%`} tone={r.ach_pct >= 100 ? "text-emerald-700" : r.ach_pct >= 80 ? "text-amber-700" : "text-rose-700"} />
+                </div>
+              </div>
+            ))}
+            {!rows.length ? (
+              <div className="px-4 py-6 text-center text-sm text-slate-400">
+                {report.isFetching ? "Loading…" : "No data for this date range."}
+              </div>
+            ) : null}
+            {T ? (
+              <div className="rounded-xl border-2 border-slate-300 bg-slate-100 p-3">
+                <div className="mb-1.5 text-[11px] font-bold uppercase text-slate-500">Total</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <MStat label="Target" value={fmt(T.plan_target)} />
+                  <MStat label="Production" value={fmt(T.output)} />
+                  <MStat label="Achieve %" value={`${T.ach_pct}%`} />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
             <table className="min-w-full text-[12px]">
               <thead>
                 <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
@@ -338,6 +381,34 @@ export default function Reports() {
               <span>Date: <b className="text-slate-900">{quality.data?.date ?? "—"}</b></span>
               <span>DHU: <b className="text-amber-700">{quality.data?.totals?.defect_pct ?? 0}%</b></span>
             </div>
+          </div>
+
+          {/* mobile: totals + defect list (hourly matrix stays below, scrollable) */}
+          <div className="space-y-2 p-3 md:hidden">
+            <div className="grid grid-cols-5 gap-1.5">
+              <MStat label="Check" value={quality.data?.totals?.checked ?? 0} />
+              <MStat label="Pass" value={quality.data?.totals?.passed ?? 0} tone="text-emerald-700" />
+              <MStat label="Defect" value={quality.data?.totals?.defect ?? 0} tone="text-amber-700" />
+              <MStat label="Reject" value={quality.data?.totals?.reject ?? 0} tone="text-rose-700" />
+              <MStat label="DHU %" value={`${quality.data?.totals?.defect_pct ?? 0}`} tone="text-amber-700" />
+            </div>
+            {(quality.data?.defect_rows ?? []).map((r, i) => (
+              <div key={`qm-${i}`} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-slate-800">{r.defect_name}</span>
+                  <span className="text-[11px] text-slate-400">
+                    {r.defect_code || "—"}{r.machin_id ? ` · M${r.machin_id}` : ""}{r.operator_id ? ` · ${r.operator_id}` : ""}
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[13px] font-bold tabular-nums text-amber-800">{r.total}</span>
+              </div>
+            ))}
+            {!(quality.data?.defect_rows ?? []).length ? (
+              <div className="px-4 py-4 text-center text-sm text-slate-400">
+                {quality.isFetching ? "Loading…" : "No defects recorded for this line/date."}
+              </div>
+            ) : null}
+            <div className="text-center text-[11px] text-slate-400">Hour-wise matrix below — swipe sideways to scroll</div>
           </div>
 
           <div className="overflow-x-auto">
@@ -438,7 +509,39 @@ export default function Reports() {
               ) : null}
             </div>
           </div>
-          <div className="overflow-x-auto">
+
+          {/* mobile: card per machine */}
+          <div className="space-y-2 p-3 md:hidden">
+            {mhRows.map((r) => (
+              <div key={`m-${r.mid}`} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-900">M{r.mid}</span>
+                    <span className="ml-2 truncate text-[12px] text-slate-500">{r.operators.join(", ") || "—"}</span>
+                  </div>
+                  {r.still_in ? (
+                    <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Running</span>
+                  ) : (
+                    <span className="shrink-0 text-[12px] font-semibold tabular-nums text-slate-600">{r.out_time}</span>
+                  )}
+                </div>
+                <div className="mt-1 text-[12px] tabular-nums text-slate-500">
+                  In {r.in_time} · Sewing {r.sewing_start} · Break {r.break_display}
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  <MStat label="Working Hour" value={r.working_display} />
+                  <MStat label="Man Hour" value={r.actual_display} tone="text-emerald-700" />
+                </div>
+              </div>
+            ))}
+            {!mhRows.length ? (
+              <div className="px-4 py-6 text-center text-sm text-slate-400">
+                {manhour.isFetching ? "Loading…" : "No punches for this date."}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
             <table className="min-w-full text-[12px]">
               <thead>
                 <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
@@ -500,7 +603,49 @@ export default function Reports() {
       ) : null}
 
       {tab !== "efficiency" ? null : (
-      <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card">
+      <>
+      {/* mobile: card per line/day */}
+      <div className="space-y-2.5 md:hidden">
+        {rows.map((r, i) => (
+          <div key={`m-${r.date}-${r.line}-${i}`} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-slate-900">{r.line}</span>
+              <span className="text-[12px] tabular-nums text-slate-500">{r.date}</span>
+            </div>
+            <div className="mt-0.5 truncate text-[12px] text-slate-500" title={r.styles}>
+              {r.styles} · SMV {r.smv || "—"}
+            </div>
+            <div className="mt-2 grid grid-cols-3 gap-1.5">
+              <MStat label="Target" value={fmt(r.plan_target)} />
+              <MStat label="Production" value={fmt(r.output)} />
+              <MStat label="Ach %" value={`${r.ach_pct}%`} tone={r.ach_pct >= 100 ? "text-emerald-700" : r.ach_pct >= 80 ? "text-amber-700" : "text-rose-700"} />
+              <MStat label="Present MP" value={r.present_mp} />
+              <MStat label="Man Hour" value={fmt(r.day_man_hour)} />
+              <MStat label="Eff %" value={`${r.eff_pct}%`} tone={r.eff_pct >= 60 ? "text-emerald-700" : r.eff_pct >= 40 ? "text-amber-700" : "text-rose-700"} />
+            </div>
+          </div>
+        ))}
+        {!rows.length ? (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-400">
+            {report.isFetching ? "Loading…" : "No data for this date range."}
+          </div>
+        ) : null}
+        {T ? (
+          <div className="rounded-xl border-2 border-slate-300 bg-slate-100 p-3">
+            <div className="mb-1.5 text-[11px] font-bold uppercase text-slate-500">Total</div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <MStat label="Target" value={fmt(T.plan_target)} />
+              <MStat label="Production" value={fmt(T.output)} />
+              <MStat label="Ach %" value={`${T.ach_pct}%`} />
+              <MStat label="Present MP" value={T.present_mp} />
+              <MStat label="Man Hour" value={fmt(T.day_man_hour)} />
+              <MStat label="Eff %" value={`${T.eff_pct}%`} tone="text-emerald-700" />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="hidden rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card md:block">
         {/* paper-style header */}
         <div className="border-b-2 border-slate-800 px-4 py-3 text-center">
           <div className="text-lg font-bold tracking-tight text-slate-900">MBM Group</div>
@@ -608,6 +753,7 @@ export default function Reports() {
           Day SAH = Σ output × SMV ÷ 60 · Efficiency % = Day SAH ÷ Day Man Hour
         </div>
       </div>
+      </>
       )}
     </div>
   );
