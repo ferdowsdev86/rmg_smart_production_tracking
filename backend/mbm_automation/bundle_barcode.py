@@ -21,6 +21,7 @@ SELECT
     moe.order_code AS order_no,
     sz.size_no,
     csz.bundle_no,
+    sp.bcss_id,
     sp.part AS part_name,
     csz.start_ply,
     csz.end_ply,

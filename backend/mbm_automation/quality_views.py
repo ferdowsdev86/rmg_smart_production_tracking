@@ -239,6 +239,7 @@ class QualityBundleView(APIView):
                 "po_no": bundle.get("po_no"),
                 "size_no": bundle.get("size_no"),
                 "bundle_no": bundle.get("bundle_no"),
+                "bcss_id": bundle.get("bcss_id"),
                 "start_ply": bundle.get("start_ply"),
                 "end_ply": bundle.get("end_ply"),
                 "qty": qty,
