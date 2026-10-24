@@ -222,3 +222,70 @@ class NptLibraryView(APIView):
             groups[key]["reasons"].append({"id": row.id, "npt_reason": row.npt_reason})
 
         return Response({"groups": [groups[k] for k in order]})
+
+    def post(self, request):
+        """Create an NPT reason: {catogery_id, npt_reason[, category]}."""
+        from mbm_automation.npt_status import DEFAULT_CATEGORY_NAMES
+
+        reason = str(request.data.get("npt_reason") or "").strip()
+        if not reason:
+            return Response({"detail": "npt_reason is required."}, status=400)
+        try:
+            catogery_id = int(request.data.get("catogery_id") or 0)
+        except (TypeError, ValueError):
+            catogery_id = 0
+        if catogery_id not in DEFAULT_CATEGORY_NAMES:
+            return Response({"detail": "catogery_id must be 1, 2, 3 or 4."}, status=400)
+        category = (
+            str(request.data.get("category") or "").strip()
+            or DEFAULT_CATEGORY_NAMES[catogery_id]
+        )
+        if NptLibrary.objects.filter(
+            catogery_id=catogery_id, npt_reason__iexact=reason
+        ).exists():
+            return Response({"detail": "This reason already exists in the category."}, status=400)
+        row = NptLibrary.objects.create(
+            category=category[:100], npt_reason=reason[:255], catogery_id=catogery_id
+        )
+        return Response(
+            {"id": row.id, "category": row.category, "npt_reason": row.npt_reason,
+             "catogery_id": row.catogery_id},
+            status=201,
+        )
+
+    def put(self, request):
+        """Update an NPT reason: {id, npt_reason[, catogery_id]}."""
+        from mbm_automation.npt_status import DEFAULT_CATEGORY_NAMES
+
+        try:
+            row = NptLibrary.objects.get(pk=int(request.data.get("id") or 0))
+        except (NptLibrary.DoesNotExist, TypeError, ValueError):
+            return Response({"detail": "NPT reason not found."}, status=404)
+        reason = str(request.data.get("npt_reason") or "").strip()
+        if reason:
+            row.npt_reason = reason[:255]
+        cat_raw = request.data.get("catogery_id")
+        if cat_raw not in (None, ""):
+            try:
+                catogery_id = int(cat_raw)
+            except (TypeError, ValueError):
+                return Response({"detail": "catogery_id must be a number."}, status=400)
+            if catogery_id not in DEFAULT_CATEGORY_NAMES:
+                return Response({"detail": "catogery_id must be 1, 2, 3 or 4."}, status=400)
+            row.catogery_id = catogery_id
+            row.category = DEFAULT_CATEGORY_NAMES[catogery_id][:100]
+        row.save()
+        return Response(
+            {"id": row.id, "category": row.category, "npt_reason": row.npt_reason,
+             "catogery_id": row.catogery_id}
+        )
+
+    def delete(self, request):
+        """Delete an NPT reason: ?id= or {id}."""
+        rid = request.query_params.get("id") or request.data.get("id")
+        try:
+            row = NptLibrary.objects.get(pk=int(rid or 0))
+        except (NptLibrary.DoesNotExist, TypeError, ValueError):
+            return Response({"detail": "NPT reason not found."}, status=404)
+        row.delete()
+        return Response({"deleted": True, "id": int(rid)})

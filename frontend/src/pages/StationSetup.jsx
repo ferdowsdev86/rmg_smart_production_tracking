@@ -19,6 +19,187 @@ import toast from "react-hot-toast";
 import api from "../lib/api";
 import { useAuthStore } from "../store/useAuthStore";
 
+const NPT_CATEGORIES = [
+  { id: 1, label: "Machine & Utility Related" },
+  { id: 2, label: "Material Related" },
+  { id: 3, label: "Production Related" },
+  { id: 4, label: "Technical Related" },
+];
+
+/** NPT type master list (npt_library) — list + add / rename / delete. */
+function NptTypeSetup() {
+  const qc = useQueryClient();
+  const [cat, setCat] = useState(1);
+  const [newReason, setNewReason] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["npt-library"],
+    queryFn: () => api.get("/automation/npt_library/").then((r) => r.data.groups || []),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["npt-library"] });
+  const onErr = (e) => toast.error(e?.response?.data?.detail || e.message || "Failed");
+
+  const createM = useMutation({
+    mutationFn: () => api.post("/automation/npt_library/", { catogery_id: cat, npt_reason: newReason.trim() }),
+    onSuccess: () => {
+      toast.success("NPT reason added");
+      setNewReason("");
+      invalidate();
+    },
+    onError: onErr,
+  });
+  const updateM = useMutation({
+    mutationFn: ({ id, npt_reason, catogery_id }) =>
+      api.put("/automation/npt_library/", { id, npt_reason, catogery_id }),
+    onSuccess: () => {
+      toast.success("NPT reason updated");
+      setEditId(null);
+      invalidate();
+    },
+    onError: onErr,
+  });
+  const deleteM = useMutation({
+    mutationFn: (id) => api.delete("/automation/npt_library/", { params: { id } }),
+    onSuccess: () => {
+      toast.success("NPT reason deleted");
+      invalidate();
+    },
+    onError: onErr,
+  });
+
+  const groups = NPT_CATEGORIES.map((c) => ({
+    ...c,
+    reasons: (data || []).find((g) => g.catogery_id === c.id)?.reasons || [],
+  }));
+
+  return (
+    <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900">NPT Type Setup</h2>
+          <p className="text-sm text-slate-500">
+            Reasons the devices and reports use, per category (table <code>npt_library</code>).
+          </p>
+        </div>
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!newReason.trim()) return toast.error("Write the NPT reason first.");
+            createM.mutate();
+          }}
+        >
+          <select
+            className="rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm"
+            value={cat}
+            onChange={(e) => setCat(Number(e.target.value))}
+          >
+            {NPT_CATEGORIES.map((c) => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
+          <input
+            value={newReason}
+            onChange={(e) => setNewReason(e.target.value)}
+            placeholder="New NPT reason…"
+            className="w-56 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={createM.isPending}
+            className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            + Add
+          </button>
+        </form>
+      </div>
+
+      {isLoading ? (
+        <div className="text-sm text-slate-500">Loading NPT types…</div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {groups.map((g) => (
+            <div key={g.id} className="rounded-xl border border-slate-200">
+              <div className="flex items-center justify-between rounded-t-xl bg-slate-800 px-3 py-2 text-[12px] font-bold text-white">
+                {g.label}
+                <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px]">{g.reasons.length}</span>
+              </div>
+              <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+                {g.reasons.map((r) => (
+                  <li key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-[13px]">
+                    {editId === r.id ? (
+                      <>
+                        <input
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-[13px]"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          className="rounded bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white"
+                          disabled={updateM.isPending}
+                          onClick={() => {
+                            if (!editText.trim()) return toast.error("Reason can not be empty.");
+                            updateM.mutate({ id: r.id, npt_reason: editText.trim() });
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-500"
+                          onClick={() => setEditId(null)}
+                        >
+                          ✕
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="min-w-0 flex-1 truncate text-slate-700" title={r.npt_reason}>
+                          {r.npt_reason}
+                        </span>
+                        <button
+                          type="button"
+                          title="Rename"
+                          className="rounded px-1.5 py-0.5 text-[12px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                          onClick={() => {
+                            setEditId(r.id);
+                            setEditText(r.npt_reason);
+                          }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          title="Delete"
+                          className="rounded px-1.5 py-0.5 text-[12px] text-rose-400 hover:bg-rose-50 hover:text-rose-600"
+                          disabled={deleteM.isPending}
+                          onClick={() => {
+                            if (window.confirm(`Delete "${r.npt_reason}"?`)) deleteM.mutate(r.id);
+                          }}
+                        >
+                          🗑
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+                {!g.reasons.length ? (
+                  <li className="px-3 py-3 text-center text-[12px] text-slate-400">No reasons yet</li>
+                ) : null}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SortRow({ row, operations, onChange }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: row.uid,
@@ -284,6 +465,8 @@ export default function StationSetup() {
           </SortableContext>
         </DndContext>
       )}
+
+      <NptTypeSetup />
     </div>
   );
 }
