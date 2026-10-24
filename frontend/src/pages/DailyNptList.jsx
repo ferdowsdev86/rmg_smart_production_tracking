@@ -54,9 +54,13 @@ function splitReasons(value) {
 function NptReasonModal({ open, row, onClose, onSaved }) {
   const token = useAuthStore((s) => s.accessToken);
   const [selected, setSelected] = useState(() => new Set());
+  const [remarks, setRemarks] = useState("");
 
   useEffect(() => {
-    if (open && row) setSelected(new Set(splitReasons(row.npt_reason)));
+    if (open && row) {
+      setSelected(new Set(splitReasons(row.npt_reason)));
+      setRemarks(row.remarks || "");
+    }
   }, [open, row]);
 
   const { data, isLoading } = useQuery({
@@ -76,7 +80,10 @@ function NptReasonModal({ open, row, onClose, onSaved }) {
       if (row.can_confirm_reason === false) {
         return Promise.reject(new Error("NPT must end before confirming reason."));
       }
-      return api.patch(`/automation/daily_npt/${row.id}/`, { reasons: Array.from(selected) });
+      return api.patch(`/automation/daily_npt/${row.id}/`, {
+        reasons: Array.from(selected),
+        remarks: remarks.trim(),
+      });
     },
     onSuccess: () => {
       toast.success("NPT reason confirmed");
@@ -148,6 +155,20 @@ function NptReasonModal({ open, row, onClose, onSaved }) {
               ))}
             </div>
           )}
+        </div>
+
+        <div className="border-t border-slate-100 px-5 pt-3">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Remarks
+          </label>
+          <textarea
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            rows={2}
+            maxLength={500}
+            placeholder="Optional note about this NPT event…"
+            className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          />
         </div>
 
         <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3">
