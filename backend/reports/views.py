@@ -245,6 +245,25 @@ class QualityReportView(APIView):
             key=lambda r: (r["sl"] is None, r["sl"] or 0, r.get("machin_id") or 0),
         )
 
+        # operator_id stores the RFID card — show the person instead:
+        # name + employee ID no (hr_as_basic_info.associate_id), cached lookups.
+        try:
+            from mbm_automation.hr_lookup import lookup_hr_profile
+
+            for r in defect_rows:
+                rfid = (r.get("operator_id") or "").strip()
+                r["operator_rfid"] = rfid
+                if not rfid:
+                    r["operator_name"] = ""
+                    continue
+                profile = lookup_hr_profile(rfid)
+                r["operator_name"] = (profile or {}).get("operator_name") or ""
+                id_no = (profile or {}).get("hr_associate_id") or (profile or {}).get("hr_temp_id") or ""
+                if id_no:
+                    r["operator_id"] = id_no
+        except Exception:
+            pass
+
         summary = {
             str(h): {"checked": 0, "passed": 0, "defect": 0, "reject": 0, "repaired": 0, "found": 0}
             for h in hours

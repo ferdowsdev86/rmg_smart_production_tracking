@@ -397,7 +397,8 @@ export default function Reports() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold text-slate-800">{r.defect_name}</span>
                   <span className="text-[11px] text-slate-400">
-                    {r.defect_code || "—"}{r.machin_id ? ` · M${r.machin_id}` : ""}{r.operator_id ? ` · ${r.operator_id}` : ""}
+                    {r.defect_code || "—"}{r.machin_id ? ` · M${r.machin_id}` : ""}
+                    {r.operator_name ? ` · ${r.operator_name}` : r.operator_id ? ` · ${r.operator_id}` : ""}
                   </span>
                 </span>
                 <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[13px] font-bold tabular-nums text-amber-800">{r.total}</span>
@@ -417,7 +418,7 @@ export default function Reports() {
                 <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
                   <th className="border border-slate-200 px-2 py-2 text-left">Defect Name</th>
                   <th className="border border-slate-200 px-2 py-2">Code</th>
-                  <th className="border border-slate-200 px-2 py-2">Operator ID</th>
+                  <th className="border border-slate-200 px-2 py-2">Operator</th>
                   <th className="border border-slate-200 px-2 py-2">M/C Code</th>
                   {(quality.data?.hours ?? []).map((h) => (
                     <th key={h} className="border border-slate-200 px-1.5 py-2 text-center">
@@ -434,7 +435,16 @@ export default function Reports() {
                     <td className="border border-slate-200 px-2 py-1.5 text-center">
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">{r.defect_code || "—"}</span>
                     </td>
-                    <td className="border border-slate-200 px-2 py-1.5 text-center tabular-nums text-slate-700">{r.operator_id || "—"}</td>
+                    <td className="border border-slate-200 px-2 py-1.5 text-center">
+                      {r.operator_name ? (
+                        <>
+                          <span className="block text-[12px] font-semibold text-slate-800">{r.operator_name}</span>
+                          <span className="text-[10px] tabular-nums text-slate-400">ID {r.operator_id}</span>
+                        </>
+                      ) : (
+                        <span className="tabular-nums text-slate-500">{r.operator_id || "—"}</span>
+                      )}
+                    </td>
                     <td className="border border-slate-200 px-2 py-1.5 text-center">
                       {r.machin_id ? <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-white">M{r.machin_id}{r.machin_code ? ` · ${r.machin_code}` : ""}</span> : "—"}
                     </td>
