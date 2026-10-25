@@ -109,11 +109,36 @@ function HourlyProduction({ token, date }) {
         {["buyer", "style", "po"].map((f) => (
           <label key={f} className="text-xs capitalize text-slate-500">
             {f}
-            <input value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })} placeholder={f} className="mt-1 block w-32 rounded-lg border border-slate-200 px-2 py-2 text-sm" />
+            <input
+              value={form[f]}
+              list={`hp-${f}-list`}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForm((prev) => {
+                  const next = { ...prev, [f]: v };
+                  // picking a style fills its buyer/po from the known combos
+                  if (f === "style") {
+                    const combo = (D?.options ?? []).find((o) => o.style === v);
+                    if (combo) {
+                      if (!prev.buyer) next.buyer = combo.buyer;
+                      if (!prev.po) next.po = combo.po;
+                    }
+                  }
+                  return next;
+                });
+              }}
+              placeholder={`search ${f}…`}
+              className="mt-1 block w-36 rounded-lg border border-slate-200 px-2 py-2 text-sm"
+            />
+            <datalist id={`hp-${f}-list`}>
+              {[...new Set((D?.options ?? []).map((o) => o[f]).filter(Boolean))].map((v) => (
+                <option key={v} value={v} />
+              ))}
+            </datalist>
           </label>
         ))}
         <label className="text-xs text-slate-500">
-          Qty
+          QC Pass Qty
           <input type="number" min="1" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} className="mt-1 block w-24 rounded-lg border border-slate-200 px-2 py-2 text-sm" />
         </label>
         <button type="submit" disabled={createM.isPending} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">

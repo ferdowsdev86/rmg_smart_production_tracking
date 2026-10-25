@@ -65,6 +65,19 @@ class HourlyProductionView(APIView):
             )
             qc, p, dq, rq, rp = cursor.fetchone()
 
+            # search/select options for the entry form: distinct buyer/style/po
+            # combos seen in the last 30 days
+            cursor.execute(
+                "SELECT DISTINCT COALESCE(buyer,''), COALESCE(style,''), COALESCE(po,'') "
+                "FROM day_qc_diffect "
+                "WHERE date >= DATE_SUB(%s, INTERVAL 30 DAY) AND COALESCE(style,'') <> '' "
+                "ORDER BY 2 LIMIT 300",
+                [on_date],
+            )
+            combos = [
+                {"buyer": r[0], "style": r[1], "po": r[2]} for r in cursor.fetchall()
+            ]
+
             cursor.execute(
                 "SELECT id, HOUR(created_at), COALESCE(buyer,''), COALESCE(style,''), "
                 "COALESCE(po,''), pass_qty FROM day_qc_diffect "
@@ -109,6 +122,7 @@ class HourlyProductionView(APIView):
                     "production": sum(g["total"] for g in rows),
                 },
                 "manual": manual,
+                "options": combos,
             }
         )
 
