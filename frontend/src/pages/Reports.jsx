@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileSpreadsheet, Printer } from "lucide-react";
+import toast from "react-hot-toast";
 
 import api from "../lib/api";
 import { useAuthStore } from "../store/useAuthStore";
@@ -30,8 +31,205 @@ const TABS = [
   { id: "efficiency", label: "Efficiency Report" },
   { id: "manhour", label: "Man Hour Details" },
   { id: "production", label: "Production Report" },
+  { id: "hourlyprod", label: "Hourly Production" },
   { id: "quality", label: "Quality & DHU Report" },
 ];
+
+/** Hourly production matrix (buyer/style/po × hour) from day_qc_diffect,
+ *  with CRUD for manual hourly entries. */
+function HourlyProduction({ token, date }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState({ hour: 8, buyer: "", style: "", po: "", qty: "" });
+  const [editId, setEditId] = useState(null);
+  const [editQty, setEditQty] = useState("");
+
+  const q = useQuery({
+    queryKey: ["hourly-production", date],
+    queryFn: () =>
+      api.get("/automation/hourly_production/", { params: { date } }).then((r) => r.data),
+    enabled: !!token,
+  });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["hourly-production", date] });
+  const onErr = (e) => toast.error(e?.response?.data?.detail || e.message || "Failed");
+
+  const createM = useMutation({
+    mutationFn: () => api.post("/automation/hourly_production/", { date, ...form, qty: Number(form.qty) }),
+    onSuccess: () => {
+      toast.success("Hourly production added");
+      setForm((f) => ({ ...f, qty: "" }));
+      invalidate();
+    },
+    onError: onErr,
+  });
+  const updateM = useMutation({
+    mutationFn: ({ id, qty }) => api.put("/automation/hourly_production/", { id, qty }),
+    onSuccess: () => {
+      toast.success("Entry updated");
+      setEditId(null);
+      invalidate();
+    },
+    onError: onErr,
+  });
+  const deleteM = useMutation({
+    mutationFn: (id) => api.delete("/automation/hourly_production/", { params: { id } }),
+    onSuccess: () => {
+      toast.success("Entry deleted");
+      invalidate();
+    },
+    onError: onErr,
+  });
+
+  const D = q.data;
+  const hours = D?.hours ?? [];
+  const S = D?.summary;
+  const th2 = "border border-slate-200 px-2 py-2 text-center whitespace-nowrap";
+  const td2 = "border border-slate-200 px-2 py-1.5 text-center tabular-nums";
+  const hourLabel = (h) => `${String(h).padStart(2, "0")}–${String((h + 1) % 24).padStart(2, "0")}`;
+
+  return (
+    <div className="space-y-3">
+      {/* manual entry form */}
+      <form
+        className="no-print flex flex-wrap items-end gap-2 rounded-2xl bg-white border border-slate-200 p-3 shadow-card"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!form.style.trim()) return toast.error("Style is required.");
+          if (!Number(form.qty)) return toast.error("Qty is required.");
+          createM.mutate();
+        }}
+      >
+        <label className="text-xs text-slate-500">
+          Hour
+          <select value={form.hour} onChange={(e) => setForm({ ...form, hour: Number(e.target.value) })} className="mt-1 block rounded-lg border border-slate-200 px-2 py-2 text-sm">
+            {Array.from({ length: 12 }, (_, i) => 8 + i).map((h) => (
+              <option key={h} value={h}>{hourLabel(h)}</option>
+            ))}
+          </select>
+        </label>
+        {["buyer", "style", "po"].map((f) => (
+          <label key={f} className="text-xs capitalize text-slate-500">
+            {f}
+            <input value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })} placeholder={f} className="mt-1 block w-32 rounded-lg border border-slate-200 px-2 py-2 text-sm" />
+          </label>
+        ))}
+        <label className="text-xs text-slate-500">
+          Qty
+          <input type="number" min="1" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} className="mt-1 block w-24 rounded-lg border border-slate-200 px-2 py-2 text-sm" />
+        </label>
+        <button type="submit" disabled={createM.isPending} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+          + Add entry
+        </button>
+      </form>
+
+      <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card">
+        <div className="border-b-2 border-slate-800 px-4 py-3 text-center">
+          <div className="text-lg font-bold tracking-tight text-slate-900">MBM Group</div>
+          <div className="text-[13px] font-semibold text-slate-700">Hourly Production Report</div>
+          <div className="mt-1 flex flex-wrap justify-center gap-x-4 text-[12px] text-slate-600">
+            <span>Date: <b className="text-slate-900">{D?.date ?? date}</b></span>
+            {S ? (
+              <>
+                <span>Checked <b>{S.checked}</b></span>
+                <span className="text-emerald-700">Production <b>{S.production}</b></span>
+                <span className="text-amber-700">Defect <b>{S.defect}</b></span>
+                <span className="text-rose-700">Reject <b>{S.reject}</b></span>
+              </>
+            ) : null}
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-[12px]">
+            <thead>
+              <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
+                <th className={`${th2} text-left`}>Buyer</th>
+                <th className={`${th2} text-left`}>Style</th>
+                <th className={`${th2} text-left`}>PO</th>
+                {hours.map((h) => (
+                  <th key={h} className={th2}>{hourLabel(h)}</th>
+                ))}
+                <th className={`${th2} bg-slate-200`}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(D?.rows ?? []).map((r, i) => (
+                <tr key={i} className="hover:bg-sky-50/40">
+                  <td className={`${td2} text-left font-semibold text-slate-800`}>{r.buyer}</td>
+                  <td className={`${td2} max-w-[180px] truncate text-left`} title={r.style}>{r.style}</td>
+                  <td className={`${td2} text-left`}>{r.po}</td>
+                  {hours.map((h) => {
+                    const v = r.by_hour[String(h)] || 0;
+                    return (
+                      <td key={h} className={`${td2} ${v ? "bg-emerald-50 font-bold text-emerald-800" : "text-slate-300"}`}>
+                        {v || "·"}
+                      </td>
+                    );
+                  })}
+                  <td className={`${td2} bg-slate-50 font-bold text-slate-900`}>{fmt(r.total)}</td>
+                </tr>
+              ))}
+              {!(D?.rows ?? []).length ? (
+                <tr>
+                  <td colSpan={hours.length + 4} className="border border-slate-200 px-3 py-6 text-center text-slate-400">
+                    {q.isFetching ? "Loading…" : "No production recorded for this date."}
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+            {D?.rows?.length ? (
+              <tfoot>
+                <tr className="bg-slate-200 font-bold text-slate-900">
+                  <td colSpan={3} className={`${td2} text-left`}>Hour Total</td>
+                  {hours.map((h) => (
+                    <td key={h} className={td2}>{D.hour_totals[String(h)] || "·"}</td>
+                  ))}
+                  <td className={td2}>{fmt(S?.production ?? 0)}</td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+        <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
+          Source: day_qc_diffect — production = QC pass qty per save, grouped buyer/style/po × hour.
+        </div>
+      </div>
+
+      {/* manual entries CRUD list */}
+      {(D?.manual ?? []).length ? (
+        <div className="no-print rounded-2xl bg-white border border-slate-200 p-3 shadow-card">
+          <div className="mb-2 text-sm font-semibold text-slate-800">Manual entries ({D.manual.length})</div>
+          <div className="grid gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+            {D.manual.map((m) => (
+              <div key={m.id} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-[12.5px]">
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold tabular-nums text-slate-600">{hourLabel(m.hour)}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700" title={`${m.buyer} ${m.style} ${m.po}`}>
+                  {m.style}{m.po ? ` · ${m.po}` : ""}{m.buyer ? ` · ${m.buyer}` : ""}
+                </span>
+                {editId === m.id ? (
+                  <>
+                    <input type="number" min="1" value={editQty} onChange={(e) => setEditQty(e.target.value)} className="w-20 rounded border border-slate-300 px-2 py-1 text-[12.5px]" autoFocus />
+                    <button type="button" className="rounded bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white" disabled={updateM.isPending}
+                      onClick={() => { if (!Number(editQty)) return toast.error("Qty required"); updateM.mutate({ id: m.id, qty: Number(editQty) }); }}>
+                      Save
+                    </button>
+                    <button type="button" className="rounded bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-500" onClick={() => setEditId(null)}>✕</button>
+                  </>
+                ) : (
+                  <>
+                    <b className="tabular-nums text-emerald-700">{m.qty} pcs</b>
+                    <button type="button" title="Edit qty" className="rounded px-1.5 py-0.5 text-[12px] text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      onClick={() => { setEditId(m.id); setEditQty(String(m.qty)); }}>✎</button>
+                    <button type="button" title="Delete" className="rounded px-1.5 py-0.5 text-[12px] text-rose-400 hover:bg-rose-50 hover:text-rose-600" disabled={deleteM.isPending}
+                      onClick={() => { if (window.confirm(`Delete ${m.qty} pcs @ ${hourLabel(m.hour)}?`)) deleteM.mutate(m.id); }}>🗑</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export default function Reports() {
   const token = useAuthStore((s) => s.accessToken);
@@ -504,6 +702,8 @@ export default function Reports() {
           </div>
         </div>
       ) : null}
+
+      {tab === "hourlyprod" ? <HourlyProduction token={token} date={from} /> : null}
 
       {tab === "manhour" ? (
         <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card">
