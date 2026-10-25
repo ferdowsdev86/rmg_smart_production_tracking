@@ -24,6 +24,32 @@ from mbm_automation.day_sew_target_views import _parse_on_date
 
 MANUAL_MARK = "MANUAL"
 
+_LINE_NAME_CACHE: dict[int, str] = {}
+
+
+def _line_name(line_id) -> str:
+    """hr_line name (e.g. 327 -> "A09"), cached."""
+    try:
+        line_id = int(line_id or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not line_id:
+        return ""
+    if line_id in _LINE_NAME_CACHE:
+        return _LINE_NAME_CACHE[line_id]
+    name = ""
+    try:
+        with connections["cuttingedge"].cursor() as cursor:
+            cursor.execute(
+                "SELECT hr_line_name FROM hr_line WHERE hr_line_id = %s", [line_id]
+            )
+            r = cursor.fetchone()
+            name = (r[0] or "").strip() if r else ""
+    except Exception:
+        name = ""
+    _LINE_NAME_CACHE[line_id] = name
+    return name
+
 
 def _default_floor_line() -> tuple[int, int]:
     try:
@@ -87,7 +113,8 @@ class HourlyProductionView(APIView):
             )
             manual = [
                 {"id": r[0], "hour": int(r[1]), "buyer": r[2], "style": r[3],
-                 "po": r[4], "qty": int(r[5] or 0), "line": int(r[6] or 0)}
+                 "po": r[4], "qty": int(r[5] or 0), "line": int(r[6] or 0),
+                 "line_label": _line_name(r[6]) or (str(int(r[6] or 0)) if r[6] else "")}
                 for r in cursor.fetchall()
             ]
 
@@ -117,8 +144,11 @@ class HourlyProductionView(APIView):
         groups: dict = {}
         for line, buyer, style, po, h, qty in cells:
             key = (int(line or 0), buyer, style, po)
+            lid = int(line or 0)
             g = groups.setdefault(
-                key, {"line": int(line or 0) or "—", "buyer": buyer or "—",
+                key, {"line": lid or "—",
+                      "line_label": _line_name(lid) or (str(lid) if lid else "—"),
+                      "buyer": buyer or "—",
                       "style": style or "—", "po": po or "—",
                       "by_hour": {}, "total": 0}
             )
@@ -144,7 +174,9 @@ class HourlyProductionView(APIView):
                 },
                 "manual": manual,
                 "options": combos,
-                "lines": line_opts,
+                "lines": [
+                    {"line": l, "label": _line_name(l) or str(l)} for l in line_opts
+                ],
             }
         )
 

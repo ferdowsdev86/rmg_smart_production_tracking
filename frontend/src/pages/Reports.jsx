@@ -108,18 +108,16 @@ function HourlyProduction({ token, date }) {
         </label>
         <label className="text-xs text-slate-500">
           Line
-          <input
+          <select
             value={form.line}
-            list="hp-line-list"
             onChange={(e) => setForm({ ...form, line: e.target.value })}
-            placeholder="line…"
-            className="mt-1 block w-24 rounded-lg border border-slate-200 px-2 py-2 text-sm"
-          />
-          <datalist id="hp-line-list">
+            className="mt-1 block w-28 rounded-lg border border-slate-200 px-2 py-2 text-sm"
+          >
+            <option value="">Line…</option>
             {(D?.lines ?? []).map((l) => (
-              <option key={l} value={l} />
+              <option key={l.line} value={l.line}>Line {l.label}</option>
             ))}
-          </datalist>
+          </select>
         </label>
         {["buyer", "style", "po"].map((f) => (
           <label key={f} className="text-xs capitalize text-slate-500">
@@ -194,7 +192,7 @@ function HourlyProduction({ token, date }) {
             <tbody>
               {(D?.rows ?? []).map((r, i) => (
                 <tr key={i} className="hover:bg-sky-50/40">
-                  <td className={`${td2} font-bold text-slate-900`}>{r.line}</td>
+                  <td className={`${td2} font-bold text-slate-900`}>{r.line_label ?? r.line}</td>
                   <td className={`${td2} text-left font-semibold text-slate-800`}>{r.buyer}</td>
                   <td className={`${td2} max-w-[180px] truncate text-left`} title={r.style}>{r.style}</td>
                   <td className={`${td2} text-left`}>{r.po}</td>
@@ -243,7 +241,7 @@ function HourlyProduction({ token, date }) {
             {D.manual.map((m) => (
               <div key={m.id} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-[12.5px]">
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold tabular-nums text-slate-600">{hourLabel(m.hour)}</span>
-                {m.line ? <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-white">L{m.line}</span> : null}
+                {m.line ? <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-white">Line {m.line_label || m.line}</span> : null}
                 <span className="min-w-0 flex-1 truncate text-slate-700" title={`${m.buyer} ${m.style} ${m.po}`}>
                   {m.style}{m.po ? ` · ${m.po}` : ""}{m.buyer ? ` · ${m.buyer}` : ""}
                 </span>
