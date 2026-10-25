@@ -119,37 +119,87 @@ function HourlyProduction({ token, date }) {
             ))}
           </select>
         </label>
-        {["buyer", "style", "po"].map((f) => (
-          <label key={f} className="text-xs capitalize text-slate-500">
-            {f}
-            <input
-              value={form[f]}
-              list={`hp-${f}-list`}
-              onChange={(e) => {
-                const v = e.target.value;
-                setForm((prev) => {
-                  const next = { ...prev, [f]: v };
-                  // picking a style fills its buyer/po from the known combos
-                  if (f === "style") {
-                    const combo = (D?.options ?? []).find((o) => o.style === v);
-                    if (combo) {
-                      if (!prev.buyer) next.buyer = combo.buyer;
-                      if (!prev.po) next.po = combo.po;
-                    }
-                  }
-                  return next;
-                });
-              }}
-              placeholder={`search ${f}…`}
-              className="mt-1 block w-36 rounded-lg border border-slate-200 px-2 py-2 text-sm"
-            />
-            <datalist id={`hp-${f}-list`}>
-              {[...new Set((D?.options ?? []).map((o) => o[f]).filter(Boolean))].map((v) => (
-                <option key={v} value={v} />
-              ))}
-            </datalist>
-          </label>
-        ))}
+        {(() => {
+          const combos = D?.options ?? [];
+          // cascading: buyer filters styles, style filters POs; picking a
+          // style or PO auto-selects the rest of its combo
+          const buyers = [...new Set(combos.map((o) => o.buyer).filter(Boolean))];
+          const styles = [
+            ...new Set(
+              combos
+                .filter((o) => !form.buyer || o.buyer === form.buyer)
+                .map((o) => o.style)
+                .filter(Boolean),
+            ),
+          ];
+          const pos = [
+            ...new Set(
+              combos
+                .filter(
+                  (o) =>
+                    (!form.buyer || o.buyer === form.buyer) &&
+                    (!form.style || o.style === form.style),
+                )
+                .map((o) => o.po)
+                .filter(Boolean),
+            ),
+          ];
+          const onBuyer = (v) =>
+            setForm((prev) => {
+              const next = { ...prev, buyer: v };
+              // style/po of another buyer no longer valid
+              if (prev.style && !combos.some((o) => o.buyer === v && o.style === prev.style)) {
+                next.style = "";
+                next.po = "";
+              }
+              return next;
+            });
+          const onStyle = (v) =>
+            setForm((prev) => {
+              const next = { ...prev, style: v };
+              const match = combos.filter((o) => o.style === v);
+              if (match.length) {
+                next.buyer = match[0].buyer; // buyer auto-select
+                const mpos = [...new Set(match.map((o) => o.po).filter(Boolean))];
+                next.po = mpos.length === 1 ? mpos[0] : prev.po && mpos.includes(prev.po) ? prev.po : "";
+              }
+              return next;
+            });
+          const onPo = (v) =>
+            setForm((prev) => {
+              const next = { ...prev, po: v };
+              const combo = combos.find((o) => o.po === v);
+              if (combo) {
+                next.buyer = combo.buyer; // buyer + style auto-select
+                next.style = combo.style;
+              }
+              return next;
+            });
+          const field = (label, key, value, onChange, list, w) => (
+            <label className="text-xs text-slate-500">
+              {label}
+              <input
+                value={value}
+                list={`hp-${key}-list`}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={`search ${label.toLowerCase()}…`}
+                className={`mt-1 block ${w} rounded-lg border border-slate-200 px-2 py-2 text-sm`}
+              />
+              <datalist id={`hp-${key}-list`}>
+                {list.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
+            </label>
+          );
+          return (
+            <>
+              {field("Buyer", "buyer", form.buyer, onBuyer, buyers, "w-32")}
+              {field("Style", "style", form.style, onStyle, styles, "w-36")}
+              {field("Po", "po", form.po, onPo, pos, "w-36")}
+            </>
+          );
+        })()}
         <label className="text-xs text-slate-500">
           QC Pass Qty
           <input type="number" min="1" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} className="mt-1 block w-24 rounded-lg border border-slate-200 px-2 py-2 text-sm" />
