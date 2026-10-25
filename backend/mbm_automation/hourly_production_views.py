@@ -43,13 +43,14 @@ class HourlyProductionView(APIView):
         with connections["default"].cursor() as cursor:
             # production per buyer/style/po per hour — one save counted once
             cursor.execute(
-                "SELECT buyer, style, po, h, SUM(p) FROM ("
-                "SELECT COALESCE(buyer,'') buyer, COALESCE(style,'') style, "
-                "COALESCE(po,'') po, HOUR(created_at) h, MAX(pass_qty) p "
+                "SELECT line, buyer, style, po, h, SUM(p) FROM ("
+                "SELECT COALESCE(line,0) line, COALESCE(buyer,'') buyer, "
+                "COALESCE(style,'') style, COALESCE(po,'') po, "
+                "HOUR(created_at) h, MAX(pass_qty) p "
                 "FROM day_qc_diffect WHERE date = %s "
-                "GROUP BY COALESCE(bcss_id, bundle_id), created_at, "
+                "GROUP BY COALESCE(bcss_id, bundle_id), created_at, COALESCE(line,0), "
                 "COALESCE(buyer,''), COALESCE(style,''), COALESCE(po,'')) t "
-                "GROUP BY buyer, style, po, h",
+                "GROUP BY line, buyer, style, po, h",
                 [on_date],
             )
             cells = cursor.fetchall()
@@ -80,25 +81,45 @@ class HourlyProductionView(APIView):
 
             cursor.execute(
                 "SELECT id, HOUR(created_at), COALESCE(buyer,''), COALESCE(style,''), "
-                "COALESCE(po,''), pass_qty FROM day_qc_diffect "
+                "COALESCE(po,''), pass_qty, COALESCE(line,0) FROM day_qc_diffect "
                 "WHERE date = %s AND machin_code = %s ORDER BY created_at, id",
                 [on_date, MANUAL_MARK],
             )
             manual = [
                 {"id": r[0], "hour": int(r[1]), "buyer": r[2], "style": r[3],
-                 "po": r[4], "qty": int(r[5] or 0)}
+                 "po": r[4], "qty": int(r[5] or 0), "line": int(r[6] or 0)}
                 for r in cursor.fetchall()
             ]
+
+            # line choices: layout lines + lines seen recently in day_qc
+            cursor.execute(
+                "SELECT DISTINCT line FROM day_qc_diffect "
+                "WHERE date >= DATE_SUB(%s, INTERVAL 30 DAY) AND line > 0",
+                [on_date],
+            )
+            line_opts = sorted({int(r[0]) for r in cursor.fetchall()})
+        try:
+            from mbm_automation.models import LineLayout
+
+            line_opts = sorted(
+                set(line_opts)
+                | {int(l) for l in LineLayout.objects.values_list("line_no", flat=True)}
+            )
+        except Exception:
+            pass
+        with connections["default"].cursor() as cursor:
+            cursor.execute("SELECT 1")
 
         hours = list(range(8, 20))
         extra = sorted({int(c[3]) for c in cells} - set(hours))
         hours += extra
 
         groups: dict = {}
-        for buyer, style, po, h, qty in cells:
-            key = (buyer, style, po)
+        for line, buyer, style, po, h, qty in cells:
+            key = (int(line or 0), buyer, style, po)
             g = groups.setdefault(
-                key, {"buyer": buyer or "—", "style": style or "—", "po": po or "—",
+                key, {"line": int(line or 0) or "—", "buyer": buyer or "—",
+                      "style": style or "—", "po": po or "—",
                       "by_hour": {}, "total": 0}
             )
             q = int(qty or 0)
@@ -123,6 +144,7 @@ class HourlyProductionView(APIView):
                 },
                 "manual": manual,
                 "options": combos,
+                "lines": line_opts,
             }
         )
 
@@ -142,6 +164,11 @@ class HourlyProductionView(APIView):
         if not style:
             return Response({"detail": "style is required."}, status=400)
         floor, line = _default_floor_line()
+        try:
+            if data.get("line") not in (None, ""):
+                line = int(data["line"])
+        except (TypeError, ValueError):
+            return Response({"detail": "line must be a number."}, status=400)
         created = datetime.combine(on_date, datetime.min.time()).replace(hour=hour)
         with connections["default"].cursor() as cursor:
             cursor.execute(
@@ -190,6 +217,12 @@ class HourlyProductionView(APIView):
                 if field in data:
                     sets.append(f"{field}=%s")
                     params.append(str(data.get(field) or "").strip()[:100] or None)
+            if data.get("line") not in (None, ""):
+                try:
+                    sets.append("line=%s")
+                    params.append(int(data["line"]))
+                except (TypeError, ValueError):
+                    return Response({"detail": "line must be a number."}, status=400)
             if not sets:
                 return Response({"detail": "Nothing to update."}, status=400)
             cursor.execute(

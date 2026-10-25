@@ -39,7 +39,7 @@ const TABS = [
  *  with CRUD for manual hourly entries. */
 function HourlyProduction({ token, date }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ hour: 8, buyer: "", style: "", po: "", qty: "" });
+  const [form, setForm] = useState({ hour: 8, line: "", buyer: "", style: "", po: "", qty: "" });
   const [editId, setEditId] = useState(null);
   const [editQty, setEditQty] = useState("");
 
@@ -106,6 +106,21 @@ function HourlyProduction({ token, date }) {
             ))}
           </select>
         </label>
+        <label className="text-xs text-slate-500">
+          Line
+          <input
+            value={form.line}
+            list="hp-line-list"
+            onChange={(e) => setForm({ ...form, line: e.target.value })}
+            placeholder="line…"
+            className="mt-1 block w-24 rounded-lg border border-slate-200 px-2 py-2 text-sm"
+          />
+          <datalist id="hp-line-list">
+            {(D?.lines ?? []).map((l) => (
+              <option key={l} value={l} />
+            ))}
+          </datalist>
+        </label>
         {["buyer", "style", "po"].map((f) => (
           <label key={f} className="text-xs capitalize text-slate-500">
             {f}
@@ -166,6 +181,7 @@ function HourlyProduction({ token, date }) {
           <table className="min-w-full text-[12px]">
             <thead>
               <tr className="bg-slate-100 text-[10.5px] uppercase tracking-wide text-slate-600">
+                <th className={th2}>Line</th>
                 <th className={`${th2} text-left`}>Buyer</th>
                 <th className={`${th2} text-left`}>Style</th>
                 <th className={`${th2} text-left`}>PO</th>
@@ -178,6 +194,7 @@ function HourlyProduction({ token, date }) {
             <tbody>
               {(D?.rows ?? []).map((r, i) => (
                 <tr key={i} className="hover:bg-sky-50/40">
+                  <td className={`${td2} font-bold text-slate-900`}>{r.line}</td>
                   <td className={`${td2} text-left font-semibold text-slate-800`}>{r.buyer}</td>
                   <td className={`${td2} max-w-[180px] truncate text-left`} title={r.style}>{r.style}</td>
                   <td className={`${td2} text-left`}>{r.po}</td>
@@ -194,7 +211,7 @@ function HourlyProduction({ token, date }) {
               ))}
               {!(D?.rows ?? []).length ? (
                 <tr>
-                  <td colSpan={hours.length + 4} className="border border-slate-200 px-3 py-6 text-center text-slate-400">
+                  <td colSpan={hours.length + 5} className="border border-slate-200 px-3 py-6 text-center text-slate-400">
                     {q.isFetching ? "Loading…" : "No production recorded for this date."}
                   </td>
                 </tr>
@@ -203,7 +220,7 @@ function HourlyProduction({ token, date }) {
             {D?.rows?.length ? (
               <tfoot>
                 <tr className="bg-slate-200 font-bold text-slate-900">
-                  <td colSpan={3} className={`${td2} text-left`}>Hour Total</td>
+                  <td colSpan={4} className={`${td2} text-left`}>Hour Total</td>
                   {hours.map((h) => (
                     <td key={h} className={td2}>{D.hour_totals[String(h)] || "·"}</td>
                   ))}
@@ -226,6 +243,7 @@ function HourlyProduction({ token, date }) {
             {D.manual.map((m) => (
               <div key={m.id} className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-[12.5px]">
                 <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold tabular-nums text-slate-600">{hourLabel(m.hour)}</span>
+                {m.line ? <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-white">L{m.line}</span> : null}
                 <span className="min-w-0 flex-1 truncate text-slate-700" title={`${m.buyer} ${m.style} ${m.po}`}>
                   {m.style}{m.po ? ` · ${m.po}` : ""}{m.buyer ? ` · ${m.buyer}` : ""}
                 </span>
