@@ -147,8 +147,24 @@ _DEVICE_RESPONSE_DROP = frozenset(
 )
 
 
+# Only these HR designations may work on a sewing workstation; any other
+# known designation punching in gets present_status "unauthorized".
+_AUTHORIZED_DESIGNATIONS = frozenset(
+    {"JUNIOR OPERATOR", "OPERATOR", "SENIOR OPERATOR", "IRONMAN", "ASSISTANT"}
+)
+
+
+def _apply_designation_authorization(body: dict) -> dict:
+    designation = str(body.get("designation") or "").strip().upper()
+    if designation and designation != "—" and designation not in _AUTHORIZED_DESIGNATIONS:
+        body["present_status"] = "unauthorized"
+    return body
+
+
 def _slim_device_response(payload: dict) -> dict:
-    return {k: v for k, v in payload.items() if k not in _DEVICE_RESPONSE_DROP}
+    return _apply_designation_authorization(
+        {k: v for k, v in payload.items() if k not in _DEVICE_RESPONSE_DROP}
+    )
 
 
 _DEPT_NAME_CACHE: dict[int, str] = {}
@@ -492,6 +508,7 @@ class IotDataStoreView(APIView):
                     )
                 else:
                     response_body.update(_minimal_rfid_response(machin_id, machin_user_raw))
+                _apply_designation_authorization(response_body)
             except (ValueError, TypeError):
                 pass
 
