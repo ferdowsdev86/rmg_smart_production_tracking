@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from floors.models import DailyNptStatus, NptLibrary
 from mbm_automation.npt_status import (
     build_daily_npt_list,
+    floor_line_labels,
     reason_confirm_allowed,
     sync_daily_npt_status,
 )
@@ -41,17 +42,22 @@ def _serialize(row: DailyNptStatus, live: Optional[dict] = None) -> dict:
     extra = live or {}
     stop_log_id = extra.get("stop_log_id", row.stop_log_id)
     category = row.category
+    floor_label, line_label = floor_line_labels(row.floor, row.line)
     return {
         "id": row.id,
         "unit": row.unit,
         "machin_id": row.machin_id,
         "floor": row.floor,
         "line": row.line,
+        "floor_label": extra.get("floor_label", floor_label),
+        "line_label": extra.get("line_label", line_label),
         "date": row.date,
         "category": category,
         "start_log_id": row.start_log_id,
         "stop_log_id": stop_log_id,
         "start_at": extra.get("start_at", ""),
+        "calling_at": extra.get("calling_at", extra.get("start_at", "")),
+        "responder_at": extra.get("responder_at", ""),
         "stop_at": extra.get("stop_at", ""),
         "is_open": extra.get(
             "is_open",
@@ -92,11 +98,15 @@ def _serialize_live(entry: dict, persisted: Optional[DailyNptStatus] = None) -> 
         "machin_id": entry["machin_id"],
         "floor": entry["floor"],
         "line": entry["line"],
+        "floor_label": entry.get("floor_label", str(entry["floor"] or "—")),
+        "line_label": entry.get("line_label", str(entry["line"] or "—")),
         "date": entry["date"],
         "category": category,
         "start_log_id": entry["start_log_id"],
         "stop_log_id": stop_log_id,
         "start_at": entry.get("start_at", ""),
+        "calling_at": entry.get("calling_at", entry.get("start_at", "")),
+        "responder_at": entry.get("responder_at", ""),
         "stop_at": entry.get("stop_at", ""),
         "is_open": entry.get("is_open", False),
         "can_confirm_reason": reason_confirm_allowed(
@@ -138,8 +148,25 @@ class DailyNptStatusView(APIView):
             return err
         if on_date is None:
             on_date = timezone.localdate()
-        results = _merged_results(on_date)
-        return Response({"date": on_date, "count": len(results), "results": results})
+        end_date, err = _parse_date(request.query_params.get("end"))
+        if err is not None:
+            return err
+        if end_date is None or end_date <= on_date:
+            results = _merged_results(on_date)
+            return Response({"date": on_date, "count": len(results), "results": results})
+        # Date range: one merged list across the days (capped at 31 days).
+        from datetime import timedelta
+
+        if (end_date - on_date).days > 31:
+            return Response({"detail": "Date range too large (max 31 days)."}, status=400)
+        results = []
+        day = on_date
+        while day <= end_date:
+            results.extend(_merged_results(day))
+            day += timedelta(days=1)
+        return Response(
+            {"date": on_date, "end": end_date, "count": len(results), "results": results}
+        )
 
     def post(self, request):
         raw = request.data.get("date") if isinstance(request.data, dict) else None

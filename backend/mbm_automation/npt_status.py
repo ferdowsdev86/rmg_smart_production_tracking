@@ -67,6 +67,53 @@ def _floor_line_by_machine() -> dict[int, tuple[int, int]]:
     return mapping
 
 
+# (floor, line) → ("G-FLR", "A09") labels from the ERP (cuttingedgedb hr_line /
+# hr_floor). line_layout.line_no IS the ERP hr_line_id.
+_FLOOR_LINE_LABEL_CACHE: dict[tuple[int, int], tuple[str, str]] = {}
+
+
+def floor_line_labels(floor: int, line: int) -> tuple[str, str]:
+    key = (int(floor or 0), int(line or 0))
+    cached = _FLOOR_LINE_LABEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    floor_label, line_label = "", ""
+    try:
+        from django.db import connections
+
+        with connections["cuttingedge"].cursor() as cursor:
+            if key[1]:
+                cursor.execute(
+                    "SELECT hr_line_name, hr_line_floor_id FROM hr_line "
+                    "WHERE hr_line_id = %s",
+                    [key[1]],
+                )
+                r = cursor.fetchone()
+                if r:
+                    line_label = (r[0] or "").strip()
+                    floor_id = r[1] or key[0]
+                else:
+                    floor_id = key[0]
+            else:
+                floor_id = key[0]
+            if floor_id:
+                cursor.execute(
+                    "SELECT hr_floor_name FROM hr_floor WHERE hr_floor_id = %s",
+                    [floor_id],
+                )
+                r = cursor.fetchone()
+                if r:
+                    floor_label = (r[0] or "").strip()
+    except Exception:
+        pass
+    labels = (
+        floor_label or (str(key[0]) if key[0] else "—"),
+        line_label or (str(key[1]) if key[1] else "—"),
+    )
+    _FLOOR_LINE_LABEL_CACHE[key] = labels
+    return labels
+
+
 def _flag_npt_intervals(
     logs,
     flag_attr: str,
@@ -80,15 +127,18 @@ def _flag_npt_intervals(
     (any machin_user on the same machine / date / line — flag2 logged_at is the end
     time), or a new flag=1 (implicit stop).
     """
-    # Single open session per machine: (start_ts, start_id, machin_user)
-    open_session: Optional[tuple[datetime, int, str]] = None
+    # Single open session per machine: [start_ts, start_id, machin_user, responder_ts]
+    open_session: Optional[list] = None
     intervals: list[dict] = []
+
+    def _fmt(ts) -> str:
+        return timezone.localtime(ts).strftime("%H:%M:%S") if ts else ""
 
     def _close(stop_ts: datetime, stop_id: int, stop_type: str) -> None:
         nonlocal open_session
         if open_session is None:
             return
-        start_ts, start_id, user = open_session
+        start_ts, start_id, user, responder_ts = open_session
         open_session = None
         seconds = max(0.0, (stop_ts - start_ts).total_seconds())
         intervals.append(
@@ -96,8 +146,10 @@ def _flag_npt_intervals(
                 "start_id": start_id,
                 "stop_id": stop_id,
                 "machin_user": user,
-                "start_at": timezone.localtime(start_ts).strftime("%H:%M:%S"),
-                "stop_at": timezone.localtime(stop_ts).strftime("%H:%M:%S"),
+                "start_at": _fmt(start_ts),
+                "calling_at": _fmt(start_ts),
+                "responder_at": _fmt(responder_ts),
+                "stop_at": _fmt(stop_ts),
                 "seconds": round(seconds, 1),
                 "minutes": round(seconds / 60.0, 2),
                 "stop_type": stop_type,
@@ -117,7 +169,7 @@ def _flag_npt_intervals(
         if flag_val == 1:
             if open_session is not None:
                 _close(ts, log.id, f"{flag_attr}=1 (implicit stop)")
-            open_session = (ts, log.id, user)
+            open_session = [ts, log.id, user, None]
             continue
 
         if flag_val == 3:
@@ -128,18 +180,22 @@ def _flag_npt_intervals(
             # Legacy data (before the protocol date) used 2 as the stop.
             if stop_on_two:
                 _close(ts, log.id, f"{flag_attr}=2")
+            elif open_session is not None and open_session[3] is None:
+                open_session[3] = ts
         elif use_flag2_stop and flag2 == 1:
             # Same machine / date / line — flag2 logged_at ends the open NPT.
             _close(ts, log.id, "flag2=1")
 
     if open_session is not None:
-        start_ts, start_id, user = open_session
+        start_ts, start_id, user, responder_ts = open_session
         intervals.append(
             {
                 "start_id": start_id,
                 "stop_id": 0,
                 "machin_user": user,
-                "start_at": timezone.localtime(start_ts).strftime("%H:%M:%S"),
+                "start_at": _fmt(start_ts),
+                "calling_at": _fmt(start_ts),
+                "responder_at": _fmt(responder_ts),
                 "stop_at": "",
                 "seconds": 0,
                 "minutes": 0,
@@ -161,16 +217,21 @@ def _entry_from_interval(
     line: int,
     category: str,
 ) -> dict:
+    floor_label, line_label = floor_line_labels(floor, line)
     return {
         "unit": "",
         "machin_id": mid,
         "floor": floor,
         "line": line,
+        "floor_label": floor_label,
+        "line_label": line_label,
         "date": on_date,
         "category": category,
         "start_log_id": iv["start_id"],
         "stop_log_id": iv["stop_id"],
         "start_at": iv["start_at"],
+        "calling_at": iv.get("calling_at", iv["start_at"]),
+        "responder_at": iv.get("responder_at", ""),
         "stop_at": iv["stop_at"],
         "is_open": iv.get("is_open", False),
         "npt_reason": "",

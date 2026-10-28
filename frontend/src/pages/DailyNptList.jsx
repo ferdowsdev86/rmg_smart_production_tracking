@@ -10,6 +10,23 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** "2026-10-28" → "28/10/26" */
+function fmtDate(value) {
+  const s = String(value || "");
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1].slice(2)}` : s;
+}
+
+/** NPT time: starts at the responder card punch (falls back to the calling
+ *  press for legacy events without a stage-2 punch). */
+function nptTime(row) {
+  if (row.is_open) {
+    return row.responder_at ? `${row.responder_at} → In progress` : "Waiting for responder";
+  }
+  const start = row.responder_at || row.start_at;
+  return start ? `${start} → ${row.stop_at || "—"}` : "—";
+}
+
 /** Convert decimal hours (from API) to H:MM:SS display. */
 function formatNptHour(hours) {
   const totalSeconds = Math.round(Number(hours || 0) * 3600);
@@ -207,13 +224,22 @@ export default function DailyNptList() {
   const qc = useQueryClient();
 
   const [date, setDate] = useState(todayStr());
+  const [endDate, setEndDate] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [editing, setEditing] = useState(null);
 
+  // Date-range mode: when a "to" date after the start date is chosen, the
+  // list covers the range and the Date column appears.
+  const isRange = !!endDate && endDate > date;
+
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ["daily-npt", date],
+    queryKey: ["daily-npt", date, isRange ? endDate : ""],
     queryFn: () =>
-      api.get("/automation/daily_npt/", { params: { date } }).then((r) => r.data),
+      api
+        .get("/automation/daily_npt/", {
+          params: isRange ? { date, end: endDate } : { date },
+        })
+        .then((r) => r.data),
     enabled: !!token && !!date,
     refetchInterval: 15 * 1000,
   });
@@ -284,26 +310,27 @@ export default function DailyNptList() {
     const bodyRows = filteredRows
       .map(
         (r) =>
-          `<tr><td>${esc(r.date)}</td><td>${esc(r.machin_id)}</td><td>${esc(r.unit)}</td><td class="c">${esc(r.floor)}</td><td class="c">${esc(r.line)}</td><td>${esc(r.category)}</td><td>${esc(r.start_log_id)}</td><td>${esc(r.start_at)}</td><td>${r.is_open ? "In progress" : esc(r.stop_at)}</td><td>${esc(r.npt_reason)}</td><td class="c">${r.is_open ? "" : formatNptHour(r.npt_hour)}</td><td>${esc(r.remarks)}</td><td>${status(r)}</td></tr>`,
+          `<tr>${isRange ? `<td>${esc(fmtDate(r.date))}</td>` : ""}<td>${esc(r.machin_id)}</td><td class="c">${esc(r.floor_label || r.floor)}</td><td class="c">${esc(r.line_label || r.line)}</td><td>${esc(r.category)}</td><td>${esc(r.calling_at)}</td><td>${esc(r.responder_at || (r.is_open ? "" : r.start_at))}</td><td>${r.is_open ? "In progress" : esc(r.stop_at)}</td><td>${esc(r.npt_reason)}</td><td class="c">${r.is_open ? "" : formatNptHour(r.npt_hour)}</td><td>${esc(r.remarks)}</td><td>${status(r)}</td></tr>`,
       )
       .join("");
     const sumRows = categorySummary
       .map((x) => `<tr><td>${esc(x.category)}</td><td class="c">${x.events}</td><td class="c">${formatNptHour(x.totalHours)}</td></tr>`)
       .join("");
-    const html = `<html><head><meta charset="utf-8"><title>Daily NPT ${date}</title>
+    const rangeLabel = isRange ? `${fmtDate(date)} – ${fmtDate(endDate)}` : date;
+    const html = `<html><head><meta charset="utf-8"><title>Daily NPT ${rangeLabel}</title>
 <style>body{font-family:Arial,sans-serif}h1{font-size:16px;margin:0}h2{font-size:13px;margin:14px 0 4px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #94a3b8;padding:3px 6px;text-align:left}th{background:#f1f5f9;text-transform:uppercase;font-size:9.5px}td.c{text-align:center}</style>
 </head><body>
-<h1>MBM Group — Daily NPT Report (${date})</h1>
+<h1>MBM Group — Daily NPT Report (${rangeLabel})</h1>
 <h2>Summary — Total NPT ${formatNptHour(dayTotalHours)}</h2>
 <table><thead><tr><th>Category</th><th>Events</th><th>NPT Hour</th></tr></thead><tbody>${sumRows}</tbody></table>
 <h2>Details${categoryFilter ? ` — ${esc(categoryFilter)}` : ""}</h2>
-<table><thead><tr><th>Date</th><th>Machine</th><th>Unit</th><th>Floor</th><th>Line</th><th>Category</th><th>Event ID</th><th>Start</th><th>Stop</th><th>NPT Reason</th><th>NPT Hour</th><th>Remarks</th><th>Status</th></tr></thead>
+<table><thead><tr>${isRange ? "<th>Date</th>" : ""}<th>Machine</th><th>Floor</th><th>Line</th><th>Category</th><th>Calling</th><th>Start</th><th>Stop</th><th>NPT Reason</th><th>NPT Hour</th><th>Remarks</th><th>Status</th></tr></thead>
 <tbody>${bodyRows}</tbody></table>
 </body></html>`;
     const blob = new Blob(["\ufeff" + html], { type: "application/vnd.ms-excel" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `daily_npt_${date}.xls`;
+    a.download = `daily_npt_${date}${isRange ? `_to_${endDate}` : ""}.xls`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -378,6 +405,25 @@ export default function DailyNptList() {
               onChange={(e) => setDate(e.target.value)}
               className="border-0 bg-transparent p-0 text-slate-900 focus:outline-none focus:ring-0"
             />
+            <span className="text-slate-400">→</span>
+            <input
+              type="date"
+              value={endDate}
+              min={date}
+              onChange={(e) => setEndDate(e.target.value)}
+              title="Optional end date — pick for a date-range report"
+              className="border-0 bg-transparent p-0 text-slate-900 focus:outline-none focus:ring-0"
+            />
+            {endDate ? (
+              <button
+                type="button"
+                onClick={() => setEndDate("")}
+                className="text-slate-400 hover:text-slate-600"
+                title="Clear end date"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </label>
           <button
             type="button"
@@ -404,7 +450,9 @@ export default function DailyNptList() {
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
             <div>
-              <h2 className="text-sm font-semibold text-slate-900">Day summary — {date}</h2>
+              <h2 className="text-sm font-semibold text-slate-900">
+                {isRange ? `Summary — ${fmtDate(date)} to ${fmtDate(endDate)}` : `Day summary — ${date}`}
+              </h2>
               <p className="text-xs text-slate-500">Category-wise NPT hour total</p>
             </div>
             <div className="rounded-lg bg-slate-900 px-3 py-2 text-right">
@@ -456,7 +504,7 @@ export default function DailyNptList() {
         ) : (
           filteredRows.map((row) => (
             <div
-              key={row.start_log_id || row.id}
+              key={`${row.date}-${row.start_log_id || row.id}`}
               className={`rounded-xl border p-3 shadow-sm ${
                 row.is_open ? "border-amber-300 bg-amber-50/70" : "border-slate-200 bg-white"
               }`}
@@ -475,11 +523,11 @@ export default function DailyNptList() {
                 </span>
               </div>
               <div className="mt-1 text-[12px] tabular-nums text-slate-500">
-                {row.start_at
-                  ? `${row.start_at} → ${row.is_open ? "In progress" : row.stop_at || "—"}`
-                  : "—"}
-                {row.start_log_id ? ` · #${row.start_log_id}` : ""}
+                {isRange ? `${fmtDate(row.date)} · ` : ""}
+                {row.floor_label || row.floor} · {row.line_label || row.line}
+                {row.calling_at ? ` · Calling ${row.calling_at}` : ""}
               </div>
+              <div className="text-[12px] tabular-nums text-slate-500">{nptTime(row)}</div>
               {row.npt_reason ? (
                 <div className="mt-1 text-[12.5px] font-semibold text-slate-700">{row.npt_reason}</div>
               ) : null}
@@ -497,13 +545,12 @@ export default function DailyNptList() {
         <table className="min-w-full divide-y divide-slate-100 text-sm">
           <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-4 py-3">Date</th>
+              {isRange ? <th className="px-4 py-3">Date</th> : null}
               <th className="px-4 py-3">Machine</th>
-              <th className="px-4 py-3">Unit</th>
               <th className="px-4 py-3">Floor</th>
               <th className="px-4 py-3">Line</th>
               <th className="px-4 py-3">Category</th>
-              <th className="px-4 py-3">Event ID</th>
+              <th className="px-4 py-3">Calling</th>
               <th className="px-4 py-3">Time</th>
               <th className="px-4 py-3">NPT Reason</th>
               <th className="px-4 py-3">NPT Hour</th>
@@ -514,13 +561,13 @@ export default function DailyNptList() {
           <tbody className="divide-y divide-slate-100">
             {isLoading || (isFetching && rows.length === 0) ? (
               <tr>
-                <td colSpan={12} className="px-4 py-6 text-center text-slate-500">
+                <td colSpan={isRange ? 11 : 10} className="px-4 py-6 text-center text-slate-500">
                   Loading…
                 </td>
               </tr>
             ) : filteredRows.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-4 py-6 text-center text-slate-500">
+                <td colSpan={isRange ? 11 : 10} className="px-4 py-6 text-center text-slate-500">
                   No NPT records for {categoryFilter || date}.
                   {categoryFilter ? " Try another category or clear the filter." : " Try Sync."}
                 </td>
@@ -528,27 +575,18 @@ export default function DailyNptList() {
             ) : (
               filteredRows.map((row) => (
                 <tr
-                  key={row.start_log_id || row.id}
+                  key={`${row.date}-${row.start_log_id || row.id}`}
                   className={row.is_open ? "bg-amber-50/60 hover:bg-amber-50" : "hover:bg-slate-50"}
                 >
-                  <td className="px-4 py-3 text-slate-700">{row.date}</td>
+                  {isRange ? (
+                    <td className="px-4 py-3 tabular-nums text-slate-700">{fmtDate(row.date)}</td>
+                  ) : null}
                   <td className="px-4 py-3 font-medium text-slate-800">{row.machin_id || "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.unit || "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.floor}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.line}</td>
+                  <td className="px-4 py-3 text-slate-600">{row.floor_label || row.floor}</td>
+                  <td className="px-4 py-3 text-slate-600">{row.line_label || row.line}</td>
                   <td className="px-4 py-3 text-slate-800">{row.category || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-slate-700">
-                    {row.start_log_id || "—"}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {row.start_at
-                      ? row.stop_at
-                        ? `${row.start_at} → ${row.stop_at}`
-                        : row.is_open
-                          ? `${row.start_at} → In progress`
-                          : row.start_at
-                      : "—"}
-                  </td>
+                  <td className="px-4 py-3 tabular-nums text-slate-600">{row.calling_at || "—"}</td>
+                  <td className="px-4 py-3 tabular-nums text-slate-600">{nptTime(row)}</td>
                   <td className="px-4 py-3 text-slate-600">{row.npt_reason || "—"}</td>
                   <td className="px-4 py-3 font-mono text-slate-700">
                     {row.is_open ? "—" : formatNptHour(row.npt_hour)}
