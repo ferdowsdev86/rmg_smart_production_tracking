@@ -25,7 +25,9 @@ export default function HealthHero({ shift, health, lastUpdated, stale }) {
         </div>
         <div className="mt-1 flex justify-between text-[10px] font-semibold tabular-nums text-slate-400">
           {hours.map((h, i) => (
-            <span key={i}>{String(h).padStart(2, "0")}</span>
+            <span key={i} className={i % 2 && i !== hours.length - 1 ? "hidden sm:inline" : ""}>
+              {String(h).padStart(2, "0")}
+            </span>
           ))}
         </div>
         <div className="text-right text-[11px] font-semibold text-slate-500">

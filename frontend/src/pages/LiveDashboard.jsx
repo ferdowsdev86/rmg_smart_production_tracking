@@ -176,24 +176,34 @@ export default function LiveDashboard() {
       }`}</style>
 
       {/* header */}
-      <div className="no-print flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-bold text-slate-900">Live Production &amp; Quality Dashboard</h1>
+      <div className="no-print space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-base font-bold leading-tight text-slate-900 sm:text-lg">
+            <span className="sm:hidden">Live Dashboard</span>
+            <span className="hidden sm:inline">Live Production &amp; Quality Dashboard</span>
+          </h1>
           <span className="rounded-md bg-slate-800 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">{line0?.label ? `Line ${line0.label}` : "—"}</span>
+          <span className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-500">
+            <span className={`h-1.5 w-1.5 rounded-full ${stale ? "bg-rose-500" : "animate-pulse bg-emerald-500"}`} /> Live · {DASH.REFRESH_MS / 1000}s
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="flex overflow-hidden rounded-lg border border-slate-200">
             {VIEWS.map((v) => (
               <button key={v.id} type="button" onClick={() => setView(v.id)} className={`px-2.5 py-1.5 text-[12px] font-semibold ${view === v.id ? "bg-slate-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
-                {v.id === "tv" ? <span className="inline-flex items-center gap-1"><MonitorPlay className="h-3.5 w-3.5" />{v.label}</span> : v.label}
+                {v.id === "tv" ? (
+                  <span className="inline-flex items-center gap-1"><MonitorPlay className="h-3.5 w-3.5" /><span className="hidden sm:inline">{v.label}</span><span className="sm:hidden">TV</span></span>
+                ) : (
+                  <>
+                    <span className="hidden sm:inline">{v.label}</span>
+                    <span className="sm:hidden">{v.label.replace(" View", "")}</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-[12px]" />
-          <span className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[12px] font-semibold tabular-nums text-slate-700">{clock}</span>
-          <span className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-500">
-            <span className={`h-1.5 w-1.5 rounded-full ${stale ? "bg-rose-500" : "animate-pulse bg-emerald-500"}`} /> Live · {DASH.REFRESH_MS / 1000}s
-          </span>
+          <span className="hidden rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[12px] font-semibold tabular-nums text-slate-700 sm:inline-flex">{clock}</span>
           <ShareMenu D={D} mach={mach} date={date} view={view} chartRef={chartRef} />
           {tv ? (
             <button type="button" onClick={toggleFull} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[12px] font-semibold text-slate-700 hover:bg-slate-50">
