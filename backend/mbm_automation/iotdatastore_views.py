@@ -198,13 +198,22 @@ def _hr_department_name(dept_id) -> str:
     return name
 
 
-def _npt_stage_from_card(flag1_value) -> int:
-    """3-stage NPT: the device sends flag4=1 with the responder's RFID in
-    flag1 — the SERVER classifies the stage from the card's HR department:
+# Responder department per NPT flag (stage 2). INDUSTRIAL ENGINEERING closes
+# any NPT type (stage 3). The card's employee + department always come from
+# cuttingedgedb.hr_as_basic_info (via lookup_hr_profile / hr_department_new).
+_NPT_RESPONDER_DEPTS = {
+    "flag4": ("ENGINEERING & FACILITIES",),  # Machine & Utility NPT
+    "flag5": ("CUTTING",),                   # Material NPT
+    "flag7": ("CAD",),                       # Technical NPT (CAD, SAMPLE & TECHNICAL)
+}
+
+
+def _npt_stage_from_card(flag1_value, responder_depts=("ENGINEERING & FACILITIES",)) -> int:
+    """3-stage NPT: the device sends flag4/flag5/flag7=1 with the responder's
+    RFID in flag1 — the SERVER classifies the stage from the card's HR dept:
 
       flag1 = 0 / 00000 / 0000000000       → 1 (operator call)
-      ENGINEERING & FACILITIES, CUTTING or
-      CAD, SAMPLE & TECHNICAL              → 2 (responder present)
+      the flag's responder department       → 2 (responder present)
       INDUSTRIAL ENGINEERING               → 3 (NPT ended by IE)
       any other / unknown card             → 0 (not a responder; the device
                                               response still says npt=1 so the
@@ -228,7 +237,7 @@ def _npt_stage_from_card(flag1_value) -> int:
             break
     if "INDUSTRIAL ENGINEERING" in name:
         return 3
-    if "ENGINEERING & FACILITIES" in name or "CUTTING" in name or "CAD" in name:
+    if any(dept in name for dept in responder_depts):
         return 2
     return 0
 
@@ -556,20 +565,22 @@ class IotDataStoreView(APIView):
             else:
                 create_kwargs[flag] = int(payload.get(flag) or 0)
 
-        # 3-stage NPT: flag4 arrives as 1 with the responder's card in flag1;
-        # the stage (1 call / 2 responder / 3 ended) is decided here from the
-        # card's HR department and stored, so NPT pairing sees the real stage.
-        # A card from any other department is NOT a responder: the row is kept
-        # out of NPT (flag4 and the card in flag1 cleared, keeps MRT clean)
+        # 3-stage NPT: flag4 (Machine) / flag5 (Material) / flag7 (Technical)
+        # arrives as 1 with the responder's card in flag1; the stage
+        # (1 call / 2 responder / 3 ended) is decided here from the card's HR
+        # department and stored, so NPT pairing sees the real stage. A card
+        # from any other department is NOT a responder: the row is kept out
+        # of NPT (the flag and the card in flag1 cleared, keeps MRT clean)
         # and npt=1 goes back so the device stays in the "calling" state.
-        npt_stage = None
         npt_response_stage = None
-        if create_kwargs.get("flag4") == 1:
-            npt_stage = _npt_stage_from_card(create_kwargs.get("flag1"))
-            create_kwargs["flag4"] = npt_stage
-            if npt_stage == 0:
+        for npt_flag, responder_depts in _NPT_RESPONDER_DEPTS.items():
+            if create_kwargs.get(npt_flag) != 1:
+                continue
+            stage = _npt_stage_from_card(create_kwargs.get("flag1"), responder_depts)
+            create_kwargs[npt_flag] = stage
+            if stage == 0:
                 create_kwargs["flag1"] = 0
-            npt_response_stage = npt_stage or 1
+            npt_response_stage = stage or 1
 
         try:
             row = SewingLog.objects.create(**create_kwargs)
