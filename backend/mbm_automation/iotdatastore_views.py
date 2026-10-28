@@ -254,6 +254,10 @@ def _apply_npt_stage_response(body: dict, row, stage=None) -> dict:
     return body
 
 
+# Device-facing confirmation key per NPT flag.
+_NPT_FLAG_KEYS = {"flag4": "MachineNPT", "flag5": "MaterialNPT", "flag7": "TechnicalNPT"}
+
+
 def _npt_stage_confirmations(row) -> dict:
     """Server confirmation for the 3-stage NPT protocol: echo the stage back.
     flag4 → MachineNPT, flag5 → MaterialNPT, flag7 → TechnicalNPT
@@ -576,6 +580,7 @@ class IotDataStoreView(APIView):
         # the swiped card) — the server never trusts it: any flag value of
         # 1 or 2 is re-classified here from the card's HR department.
         npt_response_stage = None
+        npt_response_confirms: dict = {}
         for npt_flag, responder_depts in _NPT_RESPONDER_DEPTS.items():
             if create_kwargs.get(npt_flag) not in (1, 2):
                 continue
@@ -584,6 +589,10 @@ class IotDataStoreView(APIView):
             if stage == 0:
                 create_kwargs["flag1"] = 0
             npt_response_stage = stage or 1
+            # The device checks the per-flag key too (MachineNPT / MaterialNPT /
+            # TechnicalNPT); a rejected card stores flag=0, so echo the RESPONSE
+            # stage here, not the stored one.
+            npt_response_confirms[_NPT_FLAG_KEYS[npt_flag]] = stage or 1
 
         try:
             row = SewingLog.objects.create(**create_kwargs)
@@ -632,6 +641,7 @@ class IotDataStoreView(APIView):
                         {
                             **_post_insert_response(row, response_user=machin_user, rfid_payload=None),
                             **_npt_stage_confirmations(row),
+                            **npt_response_confirms,
                         }
                     ),
                     row,
@@ -661,6 +671,7 @@ class IotDataStoreView(APIView):
                     {
                         **_post_insert_response(row, response_user=response_user, rfid_payload=rfid_payload),
                         **_npt_stage_confirmations(row),
+                        **npt_response_confirms,
                     }
                 ),
                 row,
