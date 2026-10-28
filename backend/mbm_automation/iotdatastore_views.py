@@ -572,9 +572,12 @@ class IotDataStoreView(APIView):
         # from any other department is NOT a responder: the row is kept out
         # of NPT (the flag and the card in flag1 cleared, keeps MRT clean)
         # and npt=1 goes back so the device stays in the "calling" state.
+        # The device may claim the stage itself (sends flag=2 together with
+        # the swiped card) — the server never trusts it: any flag value of
+        # 1 or 2 is re-classified here from the card's HR department.
         npt_response_stage = None
         for npt_flag, responder_depts in _NPT_RESPONDER_DEPTS.items():
-            if create_kwargs.get(npt_flag) != 1:
+            if create_kwargs.get(npt_flag) not in (1, 2):
                 continue
             stage = _npt_stage_from_card(create_kwargs.get("flag1"), responder_depts)
             create_kwargs[npt_flag] = stage
