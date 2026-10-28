@@ -206,7 +206,9 @@ def _npt_stage_from_card(flag1_value) -> int:
       ENGINEERING & FACILITIES, CUTTING or
       CAD, SAMPLE & TECHNICAL              → 2 (responder present)
       INDUSTRIAL ENGINEERING               → 3 (NPT ended by IE)
-      any other / unknown card             → 0 (rejected)"""
+      any other / unknown card             → 0 (not a responder; the device
+                                              response still says npt=1 so the
+                                              machine stays in "calling")"""
     try:
         card = int(str(flag1_value or 0).strip() or 0)
     except (TypeError, ValueError):
@@ -215,8 +217,15 @@ def _npt_stage_from_card(flag1_value) -> int:
         return 1
     from mbm_automation.hr_lookup import lookup_hr_profile
 
-    profile = lookup_hr_profile(str(card)) or lookup_hr_profile(str(card).zfill(10))
-    name = _hr_department_name((profile or {}).get("hr_new_department_id"))
+    # flag1 is an integer, so the RFID's leading zeros are lost — try the
+    # zero-padded 10-digit card first; fall back to the raw number, skipping
+    # matches that carry no department (e.g. test/demo HR rows).
+    name = ""
+    for uid in (str(card).zfill(10), str(card)):
+        profile = lookup_hr_profile(uid)
+        name = _hr_department_name((profile or {}).get("hr_new_department_id"))
+        if name:
+            break
     if "INDUSTRIAL ENGINEERING" in name:
         return 3
     if "ENGINEERING & FACILITIES" in name or "CUTTING" in name or "CAD" in name:
@@ -548,16 +557,19 @@ class IotDataStoreView(APIView):
                 create_kwargs[flag] = int(payload.get(flag) or 0)
 
         # 3-stage NPT: flag4 arrives as 1 with the responder's card in flag1;
-        # the stage (0 rejected / 1 call / 2 responder / 3 ended) is decided
-        # here from the card's HR department and stored, so NPT pairing sees
-        # the real stage. A rejected card is NOT an NPT row — flag4 and the
-        # card number in flag1 are cleared (keeps MRT clean), npt=0 goes back.
+        # the stage (1 call / 2 responder / 3 ended) is decided here from the
+        # card's HR department and stored, so NPT pairing sees the real stage.
+        # A card from any other department is NOT a responder: the row is kept
+        # out of NPT (flag4 and the card in flag1 cleared, keeps MRT clean)
+        # and npt=1 goes back so the device stays in the "calling" state.
         npt_stage = None
+        npt_response_stage = None
         if create_kwargs.get("flag4") == 1:
             npt_stage = _npt_stage_from_card(create_kwargs.get("flag1"))
             create_kwargs["flag4"] = npt_stage
             if npt_stage == 0:
                 create_kwargs["flag1"] = 0
+            npt_response_stage = npt_stage or 1
 
         try:
             row = SewingLog.objects.create(**create_kwargs)
@@ -609,7 +621,7 @@ class IotDataStoreView(APIView):
                         }
                     ),
                     row,
-                    npt_stage,
+                    npt_response_stage,
                 ),
                 status=status.HTTP_201_CREATED,
             )
@@ -638,7 +650,7 @@ class IotDataStoreView(APIView):
                     }
                 ),
                 row,
-                npt_stage,
+                npt_response_stage,
             ),
             status=status.HTTP_201_CREATED,
         )
