@@ -16,12 +16,29 @@ from floors.services import (
     mismatch_report,
 )
 from floors.services import get_today
+from reports.npt_summary import npt_summary_report
 
 
 def _parse_date(val: str | None, default: date) -> date:
     if not val:
         return default
     return date.fromisoformat(val)
+
+
+class NptSummaryReportView(APIView):
+    """GET /api/reports/npt_summary/?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+
+    NPT Summary (AQL) cross-tab: one row per NPT event, loss time placed under
+    its npt_library reason column, enriched with floor/line/style/buyer/MP.
+    """
+
+    def get(self, request):
+        today = get_today()
+        start = _parse_date(request.query_params.get("date_from"), today)
+        end = _parse_date(request.query_params.get("date_to"), start)
+        if end < start:
+            start, end = end, start
+        return Response(npt_summary_report(start, end))
 
 
 class DailyLineReportView(APIView):

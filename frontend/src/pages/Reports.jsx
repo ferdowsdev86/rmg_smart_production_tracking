@@ -33,6 +33,7 @@ const TABS = [
   { id: "production", label: "Production Report" },
   { id: "hourlyprod", label: "Hourly Production" },
   { id: "quality", label: "Quality & DHU Report" },
+  { id: "nptsummary", label: "NPT Summary (AQL)" },
 ];
 
 /** Hourly production matrix (buyer/style/po × hour) from day_qc_diffect,
@@ -328,6 +329,7 @@ export default function Reports() {
   const [tab, setTab] = useState(urlParams.get("tab") || "efficiency");
   const [from, setFrom] = useState(urlParams.get("date") || todayISO());
   const [to, setTo] = useState(urlParams.get("date") || todayISO());
+  const [nptView, setNptView] = useState("summary"); // summary | details
 
   const report = useQuery({
     queryKey: ["day-efficiency", from, to],
@@ -353,6 +355,15 @@ export default function Reports() {
     queryFn: () =>
       api.get("/automation/floor_overview_staff/", { params: { date: from } }).then((r) => r.data),
     enabled: !!token && tab === "manhour",
+  });
+
+  const nptSummary = useQuery({
+    queryKey: ["npt-summary", from, to],
+    queryFn: () =>
+      api
+        .get("/reports/npt_summary/", { params: { date_from: from, date_to: to } })
+        .then((r) => r.data),
+    enabled: !!token && tab === "nptsummary",
   });
 
   const rows = report.data?.rows ?? [];
@@ -471,7 +482,49 @@ export default function Reports() {
     window.URL.revokeObjectURL(url);
   }
 
-  const EXPORTS = { efficiency: exportExcel, manhour: exportManHourExcel, production: exportProductionExcel };
+  function exportNptSummaryExcel() {
+    const d = nptSummary.data;
+    if (!d) return;
+    const cols = d.columns || [];
+    const ct = d.column_totals || {};
+    const summaryCells = cols.map((c) => `<td>${ct[c.reason] || 0}</td>`).join("");
+    const head = `
+      <tr style="background:#1e293b;color:#fff;font-weight:bold">
+        <th>Date</th><th>Month</th><th>Floor</th><th>Line</th><th>Buyer</th><th>Style</th>
+        <th>NPT Start Time</th><th>NPT End Time</th><th>Loss Time (Min)</th><th>Effective MP</th><th>Total Loss Time (Min)</th>
+        ${cols.map((c) => `<th>${c.reason}</th>`).join("")}
+        <th>Remarks</th>
+      </tr>`;
+    const summary = `
+      <tr style="background:#fde68a;font-weight:bold">
+        <td colspan="8">NPT SUMMARY (AQL)</td>
+        <td>${d.grand_total_loss_min || 0}</td><td></td><td>${d.grand_total || 0}</td>
+        ${summaryCells}<td></td>
+      </tr>`;
+    const body = (d.rows || [])
+      .map(
+        (r) => `
+      <tr>
+        <td>${r.date}</td><td>${r.month}</td><td>${r.floor}</td><td>${r.line}</td><td>${r.buyer}</td><td>${r.style}</td>
+        <td>${r.start_time}</td><td>${r.end_time}</td><td>${r.loss_min}</td><td>${r.effective_mp}</td><td>${r.total_loss_min}</td>
+        ${cols.map((c) => `<td>${c.reason === r.reason ? r.total_loss_min : ""}</td>`).join("")}
+        <td>${r.remarks || ""}</td>
+      </tr>`
+      )
+      .join("");
+    const html = `<html><head><meta charset="utf-8"></head><body>
+      <h3>MBM Group — NPT Summary (AQL) (${from} to ${to})</h3>
+      <table border="1" cellspacing="0" cellpadding="4">${head}${summary}${body}</table></body></html>`;
+    const blob = new Blob([html], { type: "application/vnd.ms-excel" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `NPT-summary-AQL-${from}_${to}.xls`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  const EXPORTS = { efficiency: exportExcel, manhour: exportManHourExcel, production: exportProductionExcel, nptsummary: exportNptSummaryExcel };
 
   const th = "border border-slate-200 px-2 py-2 text-center whitespace-nowrap";
   const td = "border border-slate-200 px-2 py-1.5 text-center tabular-nums";
@@ -507,14 +560,14 @@ export default function Reports() {
       </div>
 
       <div className="no-print flex flex-wrap items-center gap-3">
-        <label className="text-xs text-slate-600">{tab === "efficiency" || tab === "production" ? "From" : "Date"}</label>
+        <label className="text-xs text-slate-600">{tab === "efficiency" || tab === "production" || tab === "nptsummary" ? "From" : "Date"}</label>
         <input
           type="date"
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
           value={from}
           onChange={(e) => setFrom(e.target.value)}
         />
-        {tab === "efficiency" || tab === "production" ? (
+        {tab === "efficiency" || tab === "production" || tab === "nptsummary" ? (
           <>
             <label className="text-xs text-slate-600">To</label>
             <input
@@ -1056,6 +1109,255 @@ export default function Reports() {
       </div>
       </>
       )}
+
+      {tab === "nptsummary" ? (
+        <div className="rounded-2xl bg-white border border-slate-200 overflow-hidden shadow-card">
+          <div className="no-print flex items-center gap-1.5 border-b border-slate-200 px-4 py-2">
+            {[["summary", "Summary"], ["details", "Details"]].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setNptView(id)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  nptView === id ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="ml-auto text-[11px] text-slate-400">
+              {nptView === "summary" ? "Top NPT issues & % breakdown" : "Full event-wise report"}
+            </span>
+          </div>
+          <div className="border-b-2 border-slate-800 px-4 py-3 text-center">
+            <div className="text-lg font-bold tracking-tight text-slate-900">MBM Group</div>
+            <div className="text-[13px] font-semibold text-slate-700">NPT Summary (AQL)</div>
+            <div className="mt-1 text-[12px] text-slate-600">
+              Date: <b className="text-slate-900">{from === to ? from : `${from} — ${to}`}</b>
+            </div>
+          </div>
+          {nptSummary.isLoading ? (
+            <div className="px-4 py-10 text-center text-sm text-slate-500">Loading…</div>
+          ) : (nptSummary.data?.rows ?? []).length === 0 ? (
+            <div className="px-4 py-10 text-center text-sm text-slate-500">No NPT events for this period.</div>
+          ) : nptView === "summary" ? (
+            <NptDashboard data={nptSummary.data} />
+          ) : (
+            <div className="overflow-x-auto">
+              {(() => {
+                const d = nptSummary.data;
+                const cols = d.columns || [];
+                const ct = d.column_totals || {};
+                const npTh = "border border-slate-200 px-2 py-2 text-center align-bottom whitespace-nowrap bg-slate-100 text-[11px] font-bold text-slate-700";
+                const npTd = "border border-slate-200 px-2 py-1 text-center tabular-nums text-[12px]";
+                const FIXED = ["Date", "Month", "Floor", "Line", "Buyer", "Style", "NPT Start Time", "NPT End Time", "Loss Time (Min)", "Effective MP", "Total Loss Time (Min)"];
+                // short category: drop a trailing "Related", trim common filler
+                const shortCat = (c) => (c || "").replace(/\s*related\s*$/i, "").replace(/&\s*utility/i, "& Util").trim() || "—";
+                // short reason: acronym of its words (full name on hover)
+                const shortReason = (r) => {
+                  const w = (r || "").replace(/[()/]/g, " ").split(/\s+/).filter(Boolean);
+                  if (!w.length) return "—";
+                  if (w.length === 1) return w[0].slice(0, 6).toUpperCase();
+                  return w.map((x) => x[0].toUpperCase()).join("");
+                };
+                // group the reason columns by category (columns arrive category-ordered)
+                const groups = [];
+                cols.forEach((c) => {
+                  const last = groups[groups.length - 1];
+                  if (last && last.category === c.category) last.cols.push(c);
+                  else groups.push({ category: c.category, cols: [c] });
+                });
+                const groupStart = new Set(groups.map((g) => g.cols[0].reason));
+                const brdL = (c) => (groupStart.has(c.reason) ? " border-l-2 border-slate-300" : "");
+                return (
+                  <table className="min-w-full border-collapse">
+                    <thead>
+                      <tr>
+                        {FIXED.map((h) => (
+                          <th key={h} rowSpan={2} className={`${npTh} sticky top-0`}>{h}</th>
+                        ))}
+                        {groups.map((g, gi) => (
+                          <th key={`g${gi}`} colSpan={g.cols.length} className={`${npTh} bg-slate-200 border-l-2 border-slate-300`} title={g.category}>
+                            {shortCat(g.category)}
+                          </th>
+                        ))}
+                        <th rowSpan={2} className={`${npTh} min-w-[140px] text-left`}>Remarks</th>
+                      </tr>
+                      <tr>
+                        {groups.flatMap((g) =>
+                          g.cols.map((c) => (
+                            <th key={c.reason} className={`${npTh} min-w-[42px] px-1${brdL(c)}`} title={`${g.category} · ${c.reason}`}>
+                              {shortReason(c.reason)}
+                            </th>
+                          ))
+                        )}
+                      </tr>
+                      {/* summary row */}
+                      <tr className="bg-amber-100 font-bold">
+                        <td className={`${npTd} text-left`} colSpan={8}>NPT SUMMARY (AQL)</td>
+                        <td className={npTd}>{fmt(d.grand_total_loss_min)}</td>
+                        <td className={npTd}></td>
+                        <td className={`${npTd} bg-amber-200`}>{fmt(d.grand_total)}</td>
+                        {cols.map((c) => (
+                          <td key={c.reason} className={`${npTd}${brdL(c)}`}>{ct[c.reason] ? fmt(ct[c.reason]) : ""}</td>
+                        ))}
+                        <td className={npTd}></td>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {d.rows.map((r, i) => (
+                        <tr key={`${r.id}-${i}`} className="hover:bg-slate-50">
+                          <td className={`${npTd} whitespace-nowrap text-[11px]`}>{r.date}</td>
+                          <td className={`${npTd} text-[11px]`}>{r.month}</td>
+                          <td className={`${npTd} whitespace-nowrap text-[11px]`}>{r.floor}</td>
+                          <td className={`${npTd} whitespace-nowrap text-[11px]`}>{r.line}</td>
+                          <td className={`${npTd} whitespace-nowrap`}>{r.buyer || "—"}</td>
+                          <td className={`${npTd} max-w-[140px] truncate`} title={r.style}>{r.style || "—"}</td>
+                          <td className={`${npTd} whitespace-nowrap`}>{r.start_time || "—"}</td>
+                          <td className={`${npTd} whitespace-nowrap`}>{r.end_time || "—"}</td>
+                          <td className={npTd}>{fmt(r.loss_min)}</td>
+                          <td className={npTd}>{fmt(r.effective_mp)}</td>
+                          <td className={`${npTd} font-semibold`}>{fmt(r.total_loss_min)}</td>
+                          {cols.map((c) => (
+                            <td key={c.reason} className={`${npTd}${brdL(c)} ${c.reason === r.reason ? "bg-amber-50 font-semibold text-amber-800" : ""}`}>
+                              {c.reason === r.reason ? fmt(r.total_loss_min) : ""}
+                            </td>
+                          ))}
+                          <td className={`${npTd} text-left max-w-[220px] truncate`} title={r.remarks}>{r.remarks || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+          )}
+          <div className="border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
+            Loss Time = NPT hours × 60 · Total Loss Time = Loss Time × Effective MP · Effective MP = machines with the same NPT reason on the same date · Buyer &amp; Style from the Production report (day_qc_diffect) by date + line · each event&apos;s Total Loss Time is placed under its NPT reason column.
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function NptStat({ label, value, tone }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-center">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`text-[18px] font-bold tabular-nums ${tone || "text-slate-800"}`}>{value}</div>
+    </div>
+  );
+}
+
+/** Donut gauge showing one NPT reason's share of total loss. */
+function NptDonut({ pct, label, qty }) {
+  const r = 34;
+  const circ = 2 * Math.PI * r;
+  const p = Math.max(0, Math.min(100, pct));
+  const dash = (p / 100) * circ;
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-xl border border-slate-200 bg-white p-3">
+      <div className="w-full truncate rounded-lg bg-emerald-800 px-2 py-1 text-center text-[12px] font-bold text-white" title={label}>
+        {label}
+      </div>
+      <svg viewBox="0 0 100 100" className="h-24 w-24">
+        <g transform="rotate(-90 50 50)">
+          <circle cx="50" cy="50" r={r} fill="none" stroke="#c7d2fe" strokeWidth="14" />
+          <circle cx="50" cy="50" r={r} fill="none" stroke="#f97316" strokeWidth="14" strokeDasharray={`${dash} ${circ - dash}`} />
+        </g>
+        <text x="50" y="50" textAnchor="middle" dominantBaseline="central" fontSize="20" className="fill-blue-900 font-bold">
+          {Math.round(p)}%
+        </text>
+      </svg>
+      <div className="text-[12px] font-semibold tabular-nums text-slate-600">{fmt(qty)} min</div>
+    </div>
+  );
+}
+
+/** Summary dashboard for the NPT report: top issues ranked + % donuts. */
+function NptDashboard({ data }) {
+  // Prefer the richer per-reason summary from the API; fall back to column_totals.
+  const catOf = Object.fromEntries((data?.columns || []).map((c) => [c.reason, c.category]));
+  const reasons =
+    data?.reason_summary && data.reason_summary.length
+      ? data.reason_summary.map((r) => ({
+          reason: r.reason,
+          category: r.category || catOf[r.reason] || "—",
+          loss: r.loss_min,
+          mp: r.effective_mp,
+          qty: r.total_loss,
+        }))
+      : Object.entries(data?.column_totals || {})
+          .map(([reason, qty]) => ({ reason, category: catOf[reason] || "—", loss: 0, mp: 0, qty }))
+          .filter((x) => x.qty > 0)
+          .sort((a, b) => b.qty - a.qty);
+  const total = reasons.reduce((s, x) => s + x.qty, 0) || 1;
+  const top5 = reasons.slice(0, 5);
+  const mpAvg = data?.effective_mp_avg ?? 0;
+
+  return (
+    <div className="space-y-5 p-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <NptStat label="Loss Time (min)" value={fmt(data?.grand_total_loss_min)} />
+        <NptStat label="× Effective MP (avg)" value={mpAvg ? `× ${mpAvg}` : "—"} tone="text-indigo-700" />
+        <NptStat label="= Total NPT (min)" value={fmt(data?.grand_total)} tone="text-rose-700" />
+        <NptStat label="NPT events" value={fmt(data?.count)} />
+        <NptStat label="Classified reasons" value={fmt(reasons.length)} />
+      </div>
+      <div className="-mt-3 rounded-lg bg-slate-50 px-3 py-1.5 text-center text-[12px] text-slate-600">
+        <b>Total NPT = Loss Time × Effective MP</b> — per event: Loss (min) × MP (machines sharing that reason that date).
+        Here {fmt(data?.grand_total_loss_min)} min × ~{mpAvg} MP = <b className="text-rose-700">{fmt(data?.grand_total)} min</b>.
+      </div>
+
+      {top5.length ? (
+        <div>
+          <div className="mb-2 rounded-lg bg-emerald-800 px-3 py-1.5 text-center text-sm font-bold text-white">
+            Top 5 NPT Issues (AQL)
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {top5.map((x) => (
+              <NptDonut key={x.reason} pct={(x.qty / total) * 100} label={x.reason} qty={x.qty} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="overflow-hidden rounded-xl border border-slate-200">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-800 text-white text-[12px]">
+            <tr>
+              <th className="w-14 px-3 py-2 text-left">Rank</th>
+              <th className="px-3 py-2 text-left">Details (NPT reason)</th>
+              <th className="px-3 py-2 text-left">Category</th>
+              <th className="px-3 py-2 text-right">Loss (min)</th>
+              <th className="px-3 py-2 text-right">× Eff. MP</th>
+              <th className="px-3 py-2 text-right">= Total Loss (min)</th>
+              <th className="px-3 py-2 text-right">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reasons.map((x, i) => (
+              <tr key={x.reason} className="border-t border-slate-100 hover:bg-slate-50">
+                <td className="px-3 py-1.5 font-bold text-slate-700">{i + 1}</td>
+                <td className="px-3 py-1.5 font-medium text-slate-800">{x.reason}</td>
+                <td className="px-3 py-1.5 text-slate-500">{x.category}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{x.loss ? fmt(x.loss) : "—"}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-indigo-700">{x.mp ? `× ${x.mp}` : "—"}</td>
+                <td className="px-3 py-1.5 text-right font-semibold tabular-nums text-slate-800">{fmt(x.qty)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{((x.qty / total) * 100).toFixed(2)}%</td>
+              </tr>
+            ))}
+            {!reasons.length ? (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-slate-400">
+                  No classified NPT reasons in this period (events have no reason assigned).
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

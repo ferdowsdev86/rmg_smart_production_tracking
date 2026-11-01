@@ -8,11 +8,13 @@ from reports.views import (
     ExportDailyPdfView,
     HourlyReportView,
     MismatchReportView,
+    NptSummaryReportView,
     QualityReportView,
 )
 
 urlpatterns = [
     path("daily/", DailyLineReportView.as_view()),
+    path("npt_summary/", NptSummaryReportView.as_view()),
     path("quality/", QualityReportView.as_view()),
     path("hourly/", HourlyReportView.as_view()),
     path("efficiency/", EfficiencyReportView.as_view()),
