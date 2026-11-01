@@ -1150,10 +1150,12 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
                 continue
             brk = _break_seconds(work, end_dt)
             name = (profile or {}).get("operator_name") or _operator_display_name(uid)
+            designation = (profile or {}).get("operator_designation") or "—"
             rows.append(
                 {
                     "operator_id": uid,
                     "name": name,
+                    "designation": designation,
                     "in_time": in_display,
                     "out_time": out_display,
                     "still_in": still_in,

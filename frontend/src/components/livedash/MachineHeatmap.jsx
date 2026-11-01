@@ -183,19 +183,34 @@ export default function MachineHeatmap({ D, shift, mach, staff, compactDefault =
             {rows.map((m) => {
               const pill = STATUS_PILL[m.status] || STATUS_PILL.running;
               const staffRows = staff?.machines?.[String(m.mid)] || [];
+              const mh = staff?.machine_hours?.[String(m.mid)] || null;
+              const inTime = mh?.in_time || staffRows[0]?.in_time;
+              const workDisplay = mh?.working_display || staffRows[0]?.working_display;
+              const stillIn = mh ? mh.still_in : staffRows.some((s) => s.still_in);
               return (
                 <tr key={m.mid} className={`${rowH} ${cellText}`}>
                   <td className="sticky left-0 z-10 border-b border-slate-100 bg-white px-2 py-0.5 text-left align-middle">
-                    <button type="button" onClick={() => setDrawer({ machine: m })} className="flex min-w-0 items-center gap-1 hover:text-blue-700">
+                    {/* line 1: machine number + in-time + working hours */}
+                    <button type="button" onClick={() => setDrawer({ machine: m })} className="flex min-w-0 items-center gap-1.5 hover:text-blue-700">
                       <span className="font-bold text-slate-800">M{m.mid}</span>
-                      {m.operator && !staffRows.length ? <span className="max-w-[110px] truncate text-[10px] text-slate-400">{m.operator}</span> : null}
                       <ChevronRight className="h-3 w-3 shrink-0 text-slate-300" />
+                      {inTime ? (
+                        <span className="flex items-center gap-1 whitespace-nowrap text-[9.5px] text-slate-500">
+                          <span className="tabular-nums">{inTime}</span>
+                          {workDisplay ? (
+                            <span className={`rounded px-1 font-bold tabular-nums ${stillIn ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{workDisplay}</span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                      {m.operator && !staffRows.length && !inTime ? <span className="max-w-[110px] truncate text-[10px] text-slate-400">{m.operator}</span> : null}
                     </button>
+                    {/* line 2+: operator name + designation */}
                     {staffRows.map((s) => (
-                      <div key={s.operator_id} className="flex items-center gap-1 whitespace-nowrap text-[9.5px] leading-tight text-slate-500" title={`${s.name} · IN ${s.in_time} · OUT ${s.out_time} · ${s.working_display} (actual ${s.actual_display})`}>
-                        <span className="max-w-[90px] truncate font-semibold text-slate-600">{s.name}</span>
-                        <span className="tabular-nums">{s.in_time}{s.out_time !== "—" ? `–${s.out_time}` : ""}</span>
-                        <span className={`rounded px-1 font-bold tabular-nums ${s.still_in ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{s.working_display}</span>
+                      <div key={s.operator_id} className="flex items-center gap-1 whitespace-nowrap text-[9.5px] leading-tight text-slate-500" title={`${s.name} · ${s.designation || "—"} · IN ${s.in_time} · OUT ${s.out_time} · ${s.working_display} (actual ${s.actual_display})`}>
+                        <span className="max-w-[120px] truncate font-semibold text-slate-600">{s.name}</span>
+                        {s.designation && s.designation !== "—" ? (
+                          <span className="max-w-[110px] truncate rounded bg-rose-50 px-1 font-semibold text-rose-700" title={s.designation}>{s.designation}</span>
+                        ) : null}
                       </div>
                     ))}
                   </td>
@@ -288,7 +303,12 @@ function MachineDrawer({ drawer, D, onClose, hours, staffRows = [] }) {
                 <li key={s.operator_id} className="rounded-lg bg-slate-50 px-2.5 py-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate font-semibold text-slate-800">{s.name}</span>
-                    {s.still_in ? <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700">IN</span> : null}
+                    <span className="flex shrink-0 items-center gap-1">
+                      {s.designation && s.designation !== "—" ? (
+                        <span className="rounded-full bg-rose-100 px-1.5 text-[10px] font-bold text-rose-700">{s.designation}</span>
+                      ) : null}
+                      {s.still_in ? <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700">IN</span> : null}
+                    </span>
                   </div>
                   <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] tabular-nums text-slate-500">
                     <span>In {s.in_time}</span>
