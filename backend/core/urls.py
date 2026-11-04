@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/camera/", include("attendance.urls")),
     path("api/reports/", include("reports.urls")),
     path("api/automation/", include("mbm_automation.urls")),
+    path("api/line-planner/", include("line_planner.urls")),
 ]
 
 if settings.DEBUG:

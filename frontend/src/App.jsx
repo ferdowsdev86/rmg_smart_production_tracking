@@ -5,7 +5,7 @@ import { ProtectedLayout } from "./components/ProtectedLayout";
 import FloorDashboard from "./pages/FloorDashboard";
 import LiveDashboard from "./pages/LiveDashboard";
 import LineDiagram from "./pages/LineDiagram";
-import LineLayout from "./pages/LineLayout";
+import SewingLinePlanner from "./pages/SewingLinePlanner";
 import StationView from "./pages/StationView";
 import Reports from "./pages/Reports";
 import StationSetup from "./pages/StationSetup";
@@ -31,7 +31,7 @@ export default function App() {
             <Route index element={<LiveDashboard />} />
             <Route path="classic-dashboard" element={<FloorDashboard />} />
             <Route path="lines" element={<LineDiagram />} />
-            <Route path="line-layout" element={<LineLayout />} />
+            <Route path="line-layout" element={<SewingLinePlanner />} />
             <Route path="machin-manpower-layout" element={<MachinManpowerLayout />} />
             <Route path="machinery-dashboard" element={<MachineryDashboard />} />
             <Route path="machine-list" element={<MachineList />} />
