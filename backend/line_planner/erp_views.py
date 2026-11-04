@@ -153,21 +153,41 @@ def erp_assign_view(request):
 
 @api_view(["POST"])
 def erp_operators_view(request):
-    """POST /api/line-planner/erp/operators/  Body: {date?, machine_nos:[...]}.
+    """POST /api/line-planner/erp/operators/
+
+    Body: ``{date?, machine_nos:[...]}`` or, to also get the skill-matrix match,
+    ``{date?, machines:[{no, machine_type, operations:[{operation_id, operation_name}]}]}``.
 
     For the given date, resolves the operator punched into each assigned machine
-    (date-wise machine punch record), with name, designation and photo from HR.
-    Returns a map keyed by machine number.
+    (date-wise machine punch record) with name, designation and photo from HR,
+    and — when the assigned operations are supplied — the operator's skill-matrix
+    fit for that operation (top skill, assigned skill, and a red/yellow/green
+    level). Returns a map keyed by machine number.
     """
     # imported lazily so the live-ERP planner has no hard dependency on the
     # sewing-automation app unless this endpoint is actually called
     from mbm_automation.hr_lookup import lookup_hr_profile
     from mbm_automation.sewing_analysis import resolve_active_machin_user
+    from mbm_automation.skill_matrix import lookup_skill_profile, match_slot
 
     d = request.data or {}
-    machine_nos = d.get("machine_nos") or []
-    if not isinstance(machine_nos, list):
-        return Response({"detail": "machine_nos[] is required."}, status=400)
+    machines = d.get("machines")
+    if isinstance(machines, list):
+        # normalise {no, machine_type, operations[]} entries
+        entries = []
+        for m in machines:
+            if not isinstance(m, dict):
+                continue
+            entries.append({
+                "no": m.get("no"),
+                "machine_type": m.get("machine_type"),
+                "operations": m.get("operations") or [],
+            })
+    else:
+        machine_nos = d.get("machine_nos") or []
+        if not isinstance(machine_nos, list):
+            return Response({"detail": "machine_nos[] or machines[] is required."}, status=400)
+        entries = [{"no": n, "machine_type": None, "operations": []} for n in machine_nos]
 
     date_str = (d.get("date") or "").strip()
     try:
@@ -178,28 +198,55 @@ def erp_operators_view(request):
         on_date = timezone.localdate()
 
     operators: dict[str, dict | None] = {}
-    seen: dict[int, dict | None] = {}
-    for raw in machine_nos:
+    # resolved operator (uid + hr + skill profile) cached per machine within request
+    resolved: dict[int, dict | None] = {}
+    for ent in entries:
+        raw = ent["no"]
         try:
             machin_id = int(raw)
         except (TypeError, ValueError):
             operators[str(raw)] = None
             continue
-        if machin_id in seen:
-            operators[str(raw)] = seen[machin_id]
+
+        base = resolved.get(machin_id)
+        if base is None and machin_id not in resolved:
+            uid = resolve_active_machin_user(machin_id, on_date)
+            base = None
+            if uid:
+                hr = lookup_hr_profile(uid) or {}
+                base = {
+                    "operator_id": uid,
+                    "name": hr.get("operator_name") or uid,
+                    "designation": hr.get("operator_designation") or "",
+                    "photo_url": hr.get("operator_photo_url"),
+                    "_profile": lookup_skill_profile(
+                        hr.get("hr_associate_id"), hr.get("hr_temp_id")
+                    ),
+                }
+            resolved[machin_id] = base
+
+        if base is None:
+            operators[str(raw)] = None
             continue
-        uid = resolve_active_machin_user(machin_id, on_date)
-        info = None
-        if uid:
-            hr = lookup_hr_profile(uid) or {}
-            info = {
-                "operator_id": uid,
-                "name": hr.get("operator_name") or uid,
-                "designation": hr.get("operator_designation") or "",
-                "photo_url": hr.get("operator_photo_url"),
-            }
-        seen[machin_id] = info
-        operators[str(raw)] = info
+
+        profile = base.get("_profile")
+        skill = match_slot(profile, ent["operations"], ent.get("machine_type"))
+        # efficiency badge: the assigned operation's efficiency, else the avg
+        eff = None
+        if skill.get("assigned_skill"):
+            eff = skill["assigned_skill"].get("efficiency")
+        if eff is None and profile:
+            eff = profile.get("avg_efficiency")
+
+        operators[str(raw)] = {
+            "operator_id": base["operator_id"],
+            "name": base["name"],
+            "designation": base["designation"],
+            "photo_url": base["photo_url"],
+            "grade": (profile or {}).get("process_grade"),
+            "efficiency": eff,
+            "skill": skill,
+        }
 
     return Response({"date": on_date.isoformat(), "operators": operators})
 

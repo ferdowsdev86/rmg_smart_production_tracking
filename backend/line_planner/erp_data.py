@@ -112,6 +112,7 @@ def ob_operations(obm_id: int) -> list[dict]:
         out.append(
             {
                 "id": r["id"],
+                "operation_id": r.get("operation_id"),
                 "seq": i,
                 "operation_name": (r.get("operation_name") or "").strip(),
                 "part_name": (r.get("part_name") or "").strip(),
