@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "reports",
     "websocket",
     "mbm_automation",
+    "line_planner",
 ]
 
 MIDDLEWARE = [

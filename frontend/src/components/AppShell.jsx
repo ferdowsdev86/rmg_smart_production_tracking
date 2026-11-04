@@ -10,6 +10,7 @@ import {
   Settings,
   SlidersHorizontal,
   LayoutGrid,
+  ListTree,
   Workflow,
   Wrench,
   ClipboardList,
@@ -24,6 +25,7 @@ import { useAuthStore } from "../store/useAuthStore";
 const nav = [
   { to: "/", label: "Floor Dashboard", icon: LayoutDashboard },
   { to: "/lines", label: "Finishing Line", icon: Map },
+  { to: "/line-layout", label: "Line Layout", icon: ListTree },
   { to: "/machinery-dashboard", label: "Machinery Dashboard", icon: Cog },
   { to: "/machine-list", label: "Machine List", icon: Wrench },
   { to: "/machine-maintenance", label: "Machine Maintenance", icon: ClipboardList },
