@@ -41,6 +41,7 @@ export default function SewingLinePlanner() {
   });
   const [result, setResult] = useState(null);
   const [editSlot, setEditSlot] = useState(null); // slot_no being edited
+  const [punchDate, setPunchDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   const stylesQ = useQuery({
     queryKey: ["lp-erp-styles"],
@@ -101,6 +102,25 @@ export default function SewingLinePlanner() {
   );
   const assignedCount = usedMachines.length;
 
+  // date-wise machine punch record → operator per assigned machine (name + photo)
+  const operatorsQ = useQuery({
+    queryKey: ["lp-erp-operators", punchDate, usedMachines.join(",")],
+    queryFn: () =>
+      api
+        .post("/line-planner/erp/operators/", { date: punchDate, machine_nos: usedMachines })
+        .then((r) => r.data),
+    enabled: !!token && usedMachines.length > 0,
+  });
+  const operatorByMachine = operatorsQ.data?.operators || {};
+
+  // serpentine layout: left = odd slots, right = even, input (slot 1/2) at bottom
+  const [leftSlots, rightSlots] = useMemo(() => {
+    const left = [];
+    const right = [];
+    operators.forEach((o, i) => (i % 2 === 0 ? left : right).push(o));
+    return [left.slice().reverse(), right.slice().reverse()];
+  }, [operators]);
+
   // machine summary: required vs available vs shortage per type
   const machinesQ = useQuery({
     queryKey: ["lp-erp-machines", result?.line?.line_no, result?.line?.floor],
@@ -126,6 +146,18 @@ export default function SewingLinePlanner() {
         return { type: t, required: req[t], available: a, shortage: Math.max(0, req[t] - a) };
       });
   }, [result, machinesQ.data]);
+
+  function pickMachine(slotNo, machine_no, machine_id) {
+    setResult((r) => ({
+      ...r,
+      operators: (r.operators ?? []).map((s) =>
+        s.slot_no === slotNo
+          ? { ...s, machine_no, machine_id, machine_missing: !machine_no }
+          : s
+      ),
+    }));
+    setEditSlot(null);
+  }
 
   const canGenerate = !!styleId && (form.manpower || form.target_per_hour || style);
 
@@ -218,60 +250,73 @@ export default function SewingLinePlanner() {
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_280px]">
-            {/* floor view */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
-              <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <span>▸ Input</span>
-                <span>
-                  Floor view · {operators.length} operators · {result.style?.stl_no} · {result.style?.hr_line_name}
-                </span>
-                <span>Output ▸</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {operators.map((op) => (
-                  <OperatorCard
-                    key={op.slot_no}
-                    op={op}
-                    color={colorFor(op.machine_type, typeOrder)}
-                    onEdit={() => setEditSlot(op.slot_no)}
-                    editing={editSlot === op.slot_no}
-                    lineNo={result.line?.line_no}
-                    floor={result.line?.floor}
-                    exclude={usedMachines.filter((m) => m !== op.machine_no)}
-                    onPick={(machine_no, machine_id) => {
-                      setResult((r) => ({
-                        ...r,
-                        operators: (r.operators ?? []).map((s) =>
-                          s.slot_no === op.slot_no
-                            ? { ...s, machine_no, machine_id, machine_missing: !machine_no }
-                            : s
-                        ),
-                      }));
-                      setEditSlot(null);
-                    }}
+          {/* Line Layout table (serpentine two-column floor view) */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
+            <div className="flex flex-col gap-2 bg-gradient-to-r from-cyan-500 to-teal-500 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-center text-base font-bold tracking-wide text-white sm:text-left">
+                Line Layout
+              </span>
+              <div className="flex items-center justify-center gap-3 text-xs text-cyan-50">
+                <span>{result.style?.stl_no} · {result.style?.hr_line_name} · {operators.length} operators</span>
+                <label className="flex items-center gap-1">
+                  <span className="uppercase tracking-wide">Punch date</span>
+                  <input
+                    type="date"
+                    value={punchDate}
+                    onChange={(e) => setPunchDate(e.target.value)}
+                    className="rounded bg-white/90 px-2 py-1 text-slate-800"
                   />
-                ))}
+                </label>
               </div>
             </div>
+            <div className="grid grid-cols-1 gap-x-8 gap-y-0 px-3 py-3 lg:grid-cols-2">
+              <LayoutColumn
+                slots={leftSlots}
+                color={colorFor}
+                typeOrder={typeOrder}
+                operatorByMachine={operatorByMachine}
+                operatorsLoading={operatorsQ.isFetching}
+                editSlot={editSlot}
+                setEditSlot={setEditSlot}
+                lineNo={result.line?.line_no}
+                floor={result.line?.floor}
+                usedMachines={usedMachines}
+                onPick={pickMachine}
+              />
+              <LayoutColumn
+                slots={rightSlots}
+                color={colorFor}
+                typeOrder={typeOrder}
+                operatorByMachine={operatorByMachine}
+                operatorsLoading={operatorsQ.isFetching}
+                editSlot={editSlot}
+                setEditSlot={setEditSlot}
+                lineNo={result.line?.line_no}
+                floor={result.line?.floor}
+                usedMachines={usedMachines}
+                onPick={pickMachine}
+              />
+            </div>
+          </div>
 
-            {/* machine summary side panel */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
-              <h3 className="mb-2 text-sm font-semibold text-slate-800">Machine summary</h3>
+          {/* machine summary */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
+            <h3 className="mb-2 text-sm font-semibold text-slate-800">Machine summary</h3>
+            <div className="overflow-x-auto">
               <table className="min-w-full text-xs">
                 <thead className="text-left text-[10px] uppercase text-slate-400">
-                  <tr><th className="py-1">Type</th><th className="text-right">Req</th><th className="text-right">Avail</th><th className="text-right">Short</th></tr>
+                  <tr><th className="py-1 pr-6">Type</th><th className="px-4 text-right">Req</th><th className="px-4 text-right">Avail</th><th className="px-4 text-right">Short</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {summary.map((s) => (
                     <tr key={s.type}>
-                      <td className="py-1 font-medium text-slate-700">
+                      <td className="py-1 pr-6 font-medium text-slate-700">
                         <span className="mr-1 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: colorFor(s.type, typeOrder) }} />
                         {s.type}
                       </td>
-                      <td className="text-right tabular-nums">{s.required}</td>
-                      <td className="text-right tabular-nums">{s.available}</td>
-                      <td className={`text-right tabular-nums font-semibold ${s.shortage ? "text-rose-600" : "text-emerald-600"}`}>{s.shortage || "—"}</td>
+                      <td className="px-4 text-right tabular-nums">{s.required}</td>
+                      <td className="px-4 text-right tabular-nums">{s.available}</td>
+                      <td className={`px-4 text-right tabular-nums font-semibold ${s.shortage ? "text-rose-600" : "text-emerald-600"}`}>{s.shortage || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -288,7 +333,104 @@ export default function SewingLinePlanner() {
   );
 }
 
-function OperatorCard({ op, color, onEdit, editing, onPick, lineNo, floor, exclude = [] }) {
+// one serpentine column of the Line Layout table
+const ROW_GRID = "grid grid-cols-[72px_minmax(0,1fr)_40px_128px] items-start gap-2";
+
+function LayoutColumn({
+  slots, color, typeOrder, operatorByMachine, operatorsLoading,
+  editSlot, setEditSlot, lineNo, floor, usedMachines, onPick,
+}) {
+  return (
+    <div className="min-w-0">
+      <div className={`${ROW_GRID} border-b border-slate-200 px-1 pb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500`}>
+        <span className="text-center">Machine</span>
+        <span>Operation</span>
+        <span className="text-right">SMV</span>
+        <span className="pl-1">Employee</span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {slots.map((op) => (
+          <StationRow
+            key={op.slot_no}
+            op={op}
+            color={color(op.machine_type, typeOrder)}
+            operator={op.machine_no ? operatorByMachine[op.machine_no] : null}
+            operatorsLoading={operatorsLoading}
+            editing={editSlot === op.slot_no}
+            onEdit={() => setEditSlot(editSlot === op.slot_no ? null : op.slot_no)}
+            lineNo={lineNo}
+            floor={floor}
+            exclude={usedMachines.filter((m) => m !== op.machine_no)}
+            onPick={(no, id) => onPick(op.slot_no, no, id)}
+          />
+        ))}
+        {slots.length === 0 ? <div className="py-8 text-center text-xs text-slate-400">—</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function StationRow({ op, color, operator, operatorsLoading, editing, onEdit, lineNo, floor, exclude, onPick }) {
+  const shared = op.operator_count > 1;
+  return (
+    <div className={`${ROW_GRID} py-3 ${op.is_bottleneck ? "bg-rose-50/60" : ""}`}>
+      {/* Machine */}
+      <div className="flex flex-col items-center gap-1">
+        <MachineIcon badge={op.slot_no} />
+        <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white" style={{ background: color }}>
+          {op.machine_type}
+        </span>
+        <MachinePicker
+          op={op} editing={editing} onEdit={onEdit}
+          lineNo={lineNo} floor={floor} exclude={exclude} onPick={onPick}
+        />
+      </div>
+
+      {/* Operation(s) */}
+      <div className="min-w-0 space-y-1.5 pt-1">
+        {op.operations.map((o, i) => (
+          <div key={`${o.id}-${i}`} className="truncate text-sm text-slate-700" title={o.operation_name}>
+            {o.operation_name}
+          </div>
+        ))}
+        {shared ? <div className="text-[10px] text-slate-400">Stn {op.station_no} · opr {op.sub_index}/{op.operator_count}</div> : null}
+      </div>
+
+      {/* SMV(s) */}
+      <div className="space-y-1.5 pt-1 text-right">
+        {op.operations.map((o, i) => (
+          <div key={`${o.id}-${i}`} className="text-sm tabular-nums text-slate-600">{o.smv}</div>
+        ))}
+      </div>
+
+      {/* Employee (date-wise machine punch) */}
+      <div className="pt-0.5">
+        <OperatorCell operator={operator} loading={operatorsLoading} hasMachine={!!op.machine_no} />
+      </div>
+    </div>
+  );
+}
+
+function MachineIcon({ badge }) {
+  return (
+    <div className="relative">
+      <svg width="46" height="38" viewBox="0 0 46 38" fill="none" aria-hidden="true">
+        <rect x="3" y="29" width="40" height="6" rx="2" fill="#cbd5e1" />
+        <rect x="8" y="13" width="7" height="18" rx="2" fill="#e2e8f0" />
+        <rect x="8" y="12" width="31" height="7" rx="3" fill="#e2e8f0" />
+        <rect x="32" y="12" width="7" height="14" rx="2" fill="#cbd5e1" />
+        <rect x="35" y="26" width="1.6" height="4" fill="#94a3b8" />
+        <rect x="17" y="7" width="3" height="6" rx="1" fill="#f59e0b" />
+        <circle cx="12" cy="22" r="2" fill="#94a3b8" />
+      </svg>
+      <span className="absolute -left-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-teal-500 text-[10px] font-bold text-white shadow">
+        {badge}
+      </span>
+    </div>
+  );
+}
+
+function MachinePicker({ op, editing, onEdit, lineNo, floor, exclude, onPick }) {
   const token = useAuthStore((s) => s.accessToken);
   const avail = useQuery({
     queryKey: ["lp-avail", lineNo, op.machine_type, exclude.join(",")],
@@ -300,31 +442,15 @@ function OperatorCard({ op, color, onEdit, editing, onPick, lineNo, floor, exclu
         .then((r) => r.data),
     enabled: !!token && editing && !!lineNo,
   });
-  const shared = op.operator_count > 1;
   return (
-    <div
-      className={`w-40 rounded-xl border p-2 text-xs shadow-sm ${
-        op.is_bottleneck ? "border-rose-400 bg-rose-50" : op.machine_missing ? "border-rose-300 bg-white" : "border-slate-200 bg-white"
-      }`}
-    >
-      <div className="flex items-center justify-between">
-        <span className="font-bold text-slate-800">Opr {op.slot_no}</span>
-        <span className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white" style={{ background: color }}>{op.machine_type}</span>
-      </div>
-      <div className="text-[10px] font-medium text-slate-400">
-        Stn {op.station_no}{shared ? ` · ${op.sub_index}/${op.operator_count}` : ""}
-      </div>
-      <div className="mt-1 space-y-0.5">
-        {op.operations.map((o, i) => (
-          <div key={`${o.id}-${i}`} className="truncate text-slate-600" title={`${o.operation_name} · ${o.smv} SMV`}>{o.operation_name}</div>
-        ))}
-      </div>
-      <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
-        <span>{op.smv_load} min</span>
-        <span>1 op</span>
-      </div>
-      <button type="button" onClick={onEdit} className={`mt-1 w-full truncate rounded px-1 py-0.5 text-left text-[11px] ${op.machine_missing ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-700"}`}>
-        {op.machine_missing ? <><AlertTriangle className="mr-1 inline h-3 w-3" />no machine</> : op.machine_no || "— pick —"}
+    <div className="w-full">
+      <button
+        type="button"
+        onClick={onEdit}
+        className={`w-full truncate rounded px-1 py-0.5 text-center text-[10px] ${op.machine_missing ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}
+        title={op.machine_missing ? "No machine assigned" : op.machine_no || "Pick machine"}
+      >
+        {op.machine_missing ? <><AlertTriangle className="mr-0.5 inline h-3 w-3" />no machine</> : op.machine_no || "— pick —"}
       </button>
       {editing ? (
         <select
@@ -345,6 +471,49 @@ function OperatorCard({ op, color, onEdit, editing, onPick, lineNo, floor, exclu
         </select>
       ) : null}
     </div>
+  );
+}
+
+function OperatorCell({ operator, loading, hasMachine }) {
+  if (!hasMachine) return <span className="text-[11px] text-slate-300">—</span>;
+  if (!operator) return <span className="text-[11px] text-slate-400">{loading ? "…" : "no punch"}</span>;
+  return (
+    <div className="flex items-center gap-2">
+      <OperatorAvatar name={operator.name} photo={operator.photo_url} />
+      <div className="min-w-0">
+        <div className="truncate text-xs font-semibold text-slate-800" title={operator.name}>{operator.name}</div>
+        {operator.designation ? <div className="truncate text-[10px] text-slate-500">{operator.designation}</div> : null}
+        {operator.efficiency != null ? (
+          <span className="mt-0.5 inline-block rounded bg-emerald-500 px-1 text-[10px] font-bold text-white">{operator.efficiency}%</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function OperatorAvatar({ name, photo }) {
+  const [err, setErr] = useState(false);
+  const initials = (name || "?")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  if (photo && !err) {
+    return (
+      <img
+        src={photo}
+        onError={() => setErr(true)}
+        alt={name}
+        className="h-9 w-9 flex-shrink-0 rounded object-cover ring-1 ring-slate-200"
+      />
+    );
+  }
+  return (
+    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded bg-slate-200 text-[11px] font-bold text-slate-600">
+      {initials}
+    </span>
   );
 }
 

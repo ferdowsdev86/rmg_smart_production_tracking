@@ -4,6 +4,9 @@ Styles + OB come from mbm_ie; machines from mbm_automation.line_layout. These
 are read-only against the live DB (no local tables needed).
 """
 
+from datetime import datetime
+
+from django.utils import timezone
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -146,6 +149,59 @@ def erp_assign_view(request):
         return Response({"detail": "line_no and operators[] are required."}, status=400)
     res = erp_data.assign_machines(line_no, slots, _i(d.get("floor")))
     return Response({"operators": res["stations"], "stations": res["stations"], "transfers": res["transfers"]})
+
+
+@api_view(["POST"])
+def erp_operators_view(request):
+    """POST /api/line-planner/erp/operators/  Body: {date?, machine_nos:[...]}.
+
+    For the given date, resolves the operator punched into each assigned machine
+    (date-wise machine punch record), with name, designation and photo from HR.
+    Returns a map keyed by machine number.
+    """
+    # imported lazily so the live-ERP planner has no hard dependency on the
+    # sewing-automation app unless this endpoint is actually called
+    from mbm_automation.hr_lookup import lookup_hr_profile
+    from mbm_automation.sewing_analysis import resolve_active_machin_user
+
+    d = request.data or {}
+    machine_nos = d.get("machine_nos") or []
+    if not isinstance(machine_nos, list):
+        return Response({"detail": "machine_nos[] is required."}, status=400)
+
+    date_str = (d.get("date") or "").strip()
+    try:
+        on_date = (
+            datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else timezone.localdate()
+        )
+    except ValueError:
+        on_date = timezone.localdate()
+
+    operators: dict[str, dict | None] = {}
+    seen: dict[int, dict | None] = {}
+    for raw in machine_nos:
+        try:
+            machin_id = int(raw)
+        except (TypeError, ValueError):
+            operators[str(raw)] = None
+            continue
+        if machin_id in seen:
+            operators[str(raw)] = seen[machin_id]
+            continue
+        uid = resolve_active_machin_user(machin_id, on_date)
+        info = None
+        if uid:
+            hr = lookup_hr_profile(uid) or {}
+            info = {
+                "operator_id": uid,
+                "name": hr.get("operator_name") or uid,
+                "designation": hr.get("operator_designation") or "",
+                "photo_url": hr.get("operator_photo_url"),
+            }
+        seen[machin_id] = info
+        operators[str(raw)] = info
+
+    return Response({"date": on_date.isoformat(), "operators": operators})
 
 
 @api_view(["GET"])
