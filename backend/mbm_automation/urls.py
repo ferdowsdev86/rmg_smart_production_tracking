@@ -11,6 +11,7 @@ from mbm_automation.day_sew_target_views import DaySewTargetView
 from mbm_automation.hourly_production_views import HourlyProductionView
 from mbm_automation.iotdatastore_views import IotDataStoreView
 from mbm_automation.line_dashboard_views import (
+    ManHourCountFromView,
     FloorOverviewDetailView,
     FloorOverviewStaffView,
     FloorOverviewView,
@@ -96,6 +97,10 @@ urlpatterns = [
     path(
         "floor_overview_staff/",
         FloorOverviewStaffView.as_view(),
+    ),
+    path(
+        "manhour/count_from/",
+        ManHourCountFromView.as_view(),
     ),
     path(
         "hourly_production/",
