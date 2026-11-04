@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from line_planner import erp_data
+from line_planner import erp_data, layout_store
 from line_planner.balancer import balance_line
 
 
@@ -202,6 +202,57 @@ def erp_operators_view(request):
         operators[str(raw)] = info
 
     return Response({"date": on_date.isoformat(), "operators": operators})
+
+
+@api_view(["POST"])
+def erp_save_layout_view(request):
+    """POST /api/line-planner/erp/save-layout/  Body: {result, date}.
+
+    Upserts the master layout (mastar_line_layout) and writes the date-wise
+    snapshot (child_line_layout).
+    """
+    d = request.data or {}
+    result = d.get("result")
+    if not isinstance(result, dict) or not result.get("operators"):
+        return Response({"detail": "result with operators[] is required."}, status=400)
+    date_str = (d.get("date") or "").strip()
+    try:
+        layout_date = (
+            datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else timezone.localdate()
+        )
+    except ValueError:
+        layout_date = timezone.localdate()
+
+    user = getattr(request.user, "username", None) or None
+    try:
+        saved = layout_store.save_layout(result, layout_date=layout_date.isoformat(), user=user)
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=400)
+    return Response(saved)
+
+
+@api_view(["GET"])
+def erp_load_layout_view(request):
+    """GET /api/line-planner/erp/saved-layout/?obm_id=&line_no=&floor=&date=
+
+    Returns the saved layout (date snapshot if present, else master), or
+    {saved: false} when nothing is stored for this style+line.
+    """
+    p = request.query_params
+    obm_id = _i(p.get("obm_id"))
+    if not obm_id:
+        return Response({"detail": "obm_id is required."}, status=400)
+    line_no = _i(p.get("line_no"), 0)
+    floor = _i(p.get("floor"), 0)
+    date_str = (p.get("date") or "").strip() or None
+    found = layout_store.get_layout(obm_id, line_no, floor, date_str)
+    if not found:
+        return Response({"saved": False})
+    return Response({
+        "saved": True,
+        **found,
+        "dates": layout_store.list_saved_dates(obm_id, line_no, floor),
+    })
 
 
 @api_view(["GET"])
