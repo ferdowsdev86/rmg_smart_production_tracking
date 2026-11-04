@@ -6,6 +6,8 @@ import {
   Wand2,
   Wrench,
   Zap,
+  Save,
+  FolderDown,
 } from "lucide-react";
 
 import api from "../lib/api";
@@ -85,6 +87,47 @@ export default function SewingLinePlanner() {
       toast.success("Machines assigned");
     },
     onError: (err) => toast.error(err?.response?.data?.detail || "Assign failed"),
+  });
+
+  // persist: save master + date-wise child, and load a saved layout back
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api
+        .post("/line-planner/erp/save-layout/", { result, date: punchDate })
+        .then((r) => r.data),
+    onSuccess: (d) => toast.success(`Layout saved · ${d.layout_date}`),
+    onError: (err) => toast.error(err?.response?.data?.detail || "Save failed"),
+  });
+
+  const loadMutation = useMutation({
+    mutationFn: () =>
+      api
+        .get("/line-planner/erp/saved-layout/", {
+          params: {
+            obm_id: Number(styleId),
+            line_no: style?.line_id ?? 0,
+            floor: style?.floor_id ?? 0,
+            date: punchDate,
+          },
+        })
+        .then((r) => r.data),
+    onSuccess: (d) => {
+      if (!d.saved || !d.result) {
+        toast("No saved layout for this style yet");
+        return;
+      }
+      setResult(d.result);
+      const inp = d.result.inputs || {};
+      setForm((f) => ({
+        ...f,
+        manpower: inp.manpower ?? f.manpower,
+        efficiency: inp.efficiency != null ? Math.round(inp.efficiency * 100) : f.efficiency,
+        working_hours: inp.working_hours ?? f.working_hours,
+        shape: inp.shape || f.shape,
+      }));
+      toast.success(`Loaded ${d.source}${d.layout_date ? ` · ${d.layout_date}` : ""}`);
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Load failed"),
   });
 
   // one card per operator (= manpower). Fall back to stations for older responses.
@@ -220,6 +263,12 @@ export default function SewingLinePlanner() {
             </button>
             <button type="button" disabled={!canGenerate || genMutation.isPending} onClick={() => genMutation.mutate(true)} className={btnPrimary}>
               <Zap className="h-4 w-4" /> Generate &amp; assign
+            </button>
+            <button type="button" disabled={!styleId || loadMutation.isPending} onClick={() => loadMutation.mutate()} className={btnSecondary}>
+              <FolderDown className="h-4 w-4" /> Load saved
+            </button>
+            <button type="button" disabled={!operators.length || saveMutation.isPending} onClick={() => saveMutation.mutate()} className={btnPrimary}>
+              <Save className="h-4 w-4" /> Save layout
             </button>
           </div>
         </div>

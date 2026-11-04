@@ -7,8 +7,10 @@ from line_planner.erp_views import (
     erp_generate_view,
     erp_lines_view,
     erp_machines_view,
+    erp_load_layout_view,
     erp_ob_view,
     erp_operators_view,
+    erp_save_layout_view,
     erp_styles_view,
 )
 from line_planner.views import (
@@ -39,6 +41,8 @@ urlpatterns = [
     path("erp/generate/", erp_generate_view),
     path("erp/assign/", erp_assign_view),
     path("erp/operators/", erp_operators_view),
+    path("erp/save-layout/", erp_save_layout_view),
+    path("erp/saved-layout/", erp_load_layout_view),
     path("erp/available-machines/", erp_available_machines_view),
     # local seeded endpoints (kept from step 1)
     path("generate/", generate_view),
