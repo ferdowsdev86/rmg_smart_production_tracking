@@ -6,8 +6,6 @@ import {
   Wand2,
   Wrench,
   Zap,
-  ArrowRight,
-  AlertTriangle,
 } from "lucide-react";
 
 import api from "../lib/api";
@@ -269,7 +267,7 @@ export default function SewingLinePlanner() {
                 </label>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-x-8 gap-y-0 px-3 py-3 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-y-0 lg:grid-cols-2 lg:divide-x lg:divide-slate-200">
               <LayoutColumn
                 slots={leftSlots}
                 color={colorFor}
@@ -333,26 +331,27 @@ export default function SewingLinePlanner() {
   );
 }
 
-// one serpentine column of the Line Layout table
-const ROW_GRID = "grid grid-cols-[72px_minmax(0,1fr)_40px_128px] items-start gap-2";
+// one serpentine column of the Line Layout table (dense, GSD-style grid)
+const ROW_GRID = "grid grid-cols-[92px_minmax(0,1fr)_30px_112px] items-center gap-x-2";
 
 function LayoutColumn({
   slots, color, typeOrder, operatorByMachine, operatorsLoading,
   editSlot, setEditSlot, lineNo, floor, usedMachines, onPick,
 }) {
   return (
-    <div className="min-w-0">
-      <div className={`${ROW_GRID} border-b border-slate-200 px-1 pb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500`}>
+    <div className="min-w-0 lg:px-3">
+      <div className={`${ROW_GRID} sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-1 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500`}>
         <span className="text-center">Machine</span>
         <span>Operation</span>
         <span className="text-right">SMV</span>
         <span className="pl-1">Employee</span>
       </div>
-      <div className="divide-y divide-slate-100">
-        {slots.map((op) => (
+      <div>
+        {slots.map((op, idx) => (
           <StationRow
             key={op.slot_no}
             op={op}
+            zebra={idx % 2 === 1}
             color={color(op.machine_type, typeOrder)}
             operator={op.machine_no ? operatorByMachine[op.machine_no] : null}
             operatorsLoading={operatorsLoading}
@@ -370,41 +369,44 @@ function LayoutColumn({
   );
 }
 
-function StationRow({ op, color, operator, operatorsLoading, editing, onEdit, lineNo, floor, exclude, onPick }) {
+function StationRow({ op, color, operator, operatorsLoading, editing, onEdit, lineNo, floor, exclude, onPick, zebra }) {
   const shared = op.operator_count > 1;
+  const rowBg = op.is_bottleneck ? "bg-rose-50" : zebra ? "bg-slate-50/60" : "bg-white";
   return (
-    <div className={`${ROW_GRID} py-3 ${op.is_bottleneck ? "bg-rose-50/60" : ""}`}>
+    <div className={`${ROW_GRID} border-b border-slate-100 px-1 py-1.5 ${rowBg}`}>
       {/* Machine */}
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex items-center gap-1.5">
         <MachineIcon badge={op.slot_no} />
-        <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white" style={{ background: color }}>
-          {op.machine_type}
-        </span>
-        <MachinePicker
-          op={op} editing={editing} onEdit={onEdit}
-          lineNo={lineNo} floor={floor} exclude={exclude} onPick={onPick}
-        />
+        <div className="flex min-w-0 flex-col items-start gap-0.5">
+          <span className="rounded px-1 py-px text-[9px] font-bold uppercase leading-tight text-white" style={{ background: color }}>
+            {op.machine_type}
+          </span>
+          <MachinePicker
+            op={op} editing={editing} onEdit={onEdit}
+            lineNo={lineNo} floor={floor} exclude={exclude} onPick={onPick}
+          />
+        </div>
       </div>
 
       {/* Operation(s) */}
-      <div className="min-w-0 space-y-1.5 pt-1">
+      <div className="min-w-0">
         {op.operations.map((o, i) => (
-          <div key={`${o.id}-${i}`} className="truncate text-sm text-slate-700" title={o.operation_name}>
+          <div key={`${o.id}-${i}`} className="truncate text-[13px] leading-5 text-slate-700" title={`${o.operation_name} · ${o.smv}`}>
             {o.operation_name}
           </div>
         ))}
-        {shared ? <div className="text-[10px] text-slate-400">Stn {op.station_no} · opr {op.sub_index}/{op.operator_count}</div> : null}
+        {shared ? <div className="text-[9px] leading-3 text-slate-400">Stn {op.station_no} · opr {op.sub_index}/{op.operator_count}</div> : null}
       </div>
 
       {/* SMV(s) */}
-      <div className="space-y-1.5 pt-1 text-right">
+      <div className="text-right">
         {op.operations.map((o, i) => (
-          <div key={`${o.id}-${i}`} className="text-sm tabular-nums text-slate-600">{o.smv}</div>
+          <div key={`${o.id}-${i}`} className="text-[13px] leading-5 tabular-nums text-slate-600">{o.smv}</div>
         ))}
       </div>
 
       {/* Employee (date-wise machine punch) */}
-      <div className="pt-0.5">
+      <div>
         <OperatorCell operator={operator} loading={operatorsLoading} hasMachine={!!op.machine_no} />
       </div>
     </div>
@@ -413,8 +415,8 @@ function StationRow({ op, color, operator, operatorsLoading, editing, onEdit, li
 
 function MachineIcon({ badge }) {
   return (
-    <div className="relative">
-      <svg width="46" height="38" viewBox="0 0 46 38" fill="none" aria-hidden="true">
+    <div className="relative flex-shrink-0">
+      <svg width="34" height="28" viewBox="0 0 46 38" fill="none" aria-hidden="true">
         <rect x="3" y="29" width="40" height="6" rx="2" fill="#cbd5e1" />
         <rect x="8" y="13" width="7" height="18" rx="2" fill="#e2e8f0" />
         <rect x="8" y="12" width="31" height="7" rx="3" fill="#e2e8f0" />
@@ -423,7 +425,7 @@ function MachineIcon({ badge }) {
         <rect x="17" y="7" width="3" height="6" rx="1" fill="#f59e0b" />
         <circle cx="12" cy="22" r="2" fill="#94a3b8" />
       </svg>
-      <span className="absolute -left-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-teal-500 text-[10px] font-bold text-white shadow">
+      <span className="absolute -left-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded bg-teal-500 px-0.5 text-[9px] font-bold leading-none text-white shadow">
         {badge}
       </span>
     </div>
@@ -447,10 +449,10 @@ function MachinePicker({ op, editing, onEdit, lineNo, floor, exclude, onPick }) 
       <button
         type="button"
         onClick={onEdit}
-        className={`w-full truncate rounded px-1 py-0.5 text-center text-[10px] ${op.machine_missing ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}
+        className={`w-full truncate rounded px-1 text-center text-[9px] leading-tight ${op.machine_missing ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-600"}`}
         title={op.machine_missing ? "No machine assigned" : op.machine_no || "Pick machine"}
       >
-        {op.machine_missing ? <><AlertTriangle className="mr-0.5 inline h-3 w-3" />no machine</> : op.machine_no || "— pick —"}
+        {op.machine_missing ? "no mc" : op.machine_no || "— pick —"}
       </button>
       {editing ? (
         <select
@@ -476,16 +478,18 @@ function MachinePicker({ op, editing, onEdit, lineNo, floor, exclude, onPick }) 
 
 function OperatorCell({ operator, loading, hasMachine }) {
   if (!hasMachine) return <span className="text-[11px] text-slate-300">—</span>;
-  if (!operator) return <span className="text-[11px] text-slate-400">{loading ? "…" : "no punch"}</span>;
+  if (!operator) return <span className="text-[10px] text-slate-400">{loading ? "…" : "no punch"}</span>;
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5">
       <OperatorAvatar name={operator.name} photo={operator.photo_url} />
-      <div className="min-w-0">
-        <div className="truncate text-xs font-semibold text-slate-800" title={operator.name}>{operator.name}</div>
-        {operator.designation ? <div className="truncate text-[10px] text-slate-500">{operator.designation}</div> : null}
-        {operator.efficiency != null ? (
-          <span className="mt-0.5 inline-block rounded bg-emerald-500 px-1 text-[10px] font-bold text-white">{operator.efficiency}%</span>
-        ) : null}
+      <div className="min-w-0 leading-tight">
+        <div className="truncate text-[11px] font-semibold text-slate-800" title={operator.name}>{operator.name}</div>
+        <div className="flex items-center gap-1">
+          {operator.designation ? <span className="truncate text-[9px] text-slate-500">{operator.designation}</span> : null}
+          {operator.efficiency != null ? (
+            <span className="rounded bg-emerald-500 px-1 text-[9px] font-bold text-white">{operator.efficiency}%</span>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -506,12 +510,12 @@ function OperatorAvatar({ name, photo }) {
         src={photo}
         onError={() => setErr(true)}
         alt={name}
-        className="h-9 w-9 flex-shrink-0 rounded object-cover ring-1 ring-slate-200"
+        className="h-7 w-7 flex-shrink-0 rounded object-cover ring-1 ring-slate-200"
       />
     );
   }
   return (
-    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded bg-slate-200 text-[11px] font-bold text-slate-600">
+    <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded bg-slate-200 text-[10px] font-bold text-slate-600">
       {initials}
     </span>
   );
