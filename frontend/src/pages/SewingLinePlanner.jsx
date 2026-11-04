@@ -143,14 +143,29 @@ export default function SewingLinePlanner() {
   );
   const assignedCount = usedMachines.length;
 
-  // date-wise machine punch record → operator per assigned machine (name + photo)
+  // date-wise machine punch record → operator per assigned machine, plus the
+  // operator's skill-matrix fit for the operation(s) on that machine
+  const machinePayload = useMemo(
+    () =>
+      operators
+        .filter((o) => o.machine_no)
+        .map((o) => ({
+          no: o.machine_no,
+          machine_type: o.machine_type,
+          operations: (o.operations || []).map((op) => ({
+            operation_id: op.operation_id,
+            operation_name: op.operation_name,
+          })),
+        })),
+    [operators]
+  );
   const operatorsQ = useQuery({
-    queryKey: ["lp-erp-operators", punchDate, usedMachines.join(",")],
+    queryKey: ["lp-erp-operators", punchDate, JSON.stringify(machinePayload)],
     queryFn: () =>
       api
-        .post("/line-planner/erp/operators/", { date: punchDate, machine_nos: usedMachines })
+        .post("/line-planner/erp/operators/", { date: punchDate, machines: machinePayload })
         .then((r) => r.data),
-    enabled: !!token && usedMachines.length > 0,
+    enabled: !!token && machinePayload.length > 0,
   });
   const operatorByMachine = operatorsQ.data?.operators || {};
 
@@ -316,6 +331,14 @@ export default function SewingLinePlanner() {
                 </label>
               </div>
             </div>
+            {/* skill-match legend */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 bg-slate-50 px-4 py-1.5 text-[10px] text-slate-500">
+              <span className="font-semibold uppercase tracking-wide text-slate-400">Skill match</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Top skill</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Set · not top skill</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> No skill match</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-300" /> Not in matrix</span>
+            </div>
             <div className="grid grid-cols-1 gap-y-0 lg:grid-cols-2 lg:divide-x lg:divide-slate-200">
               <LayoutColumn
                 slots={leftSlots}
@@ -381,7 +404,14 @@ export default function SewingLinePlanner() {
 }
 
 // one serpentine column of the Line Layout table (dense, GSD-style grid)
-const ROW_GRID = "grid grid-cols-[92px_minmax(0,1fr)_30px_112px] items-center gap-x-2";
+const ROW_GRID = "grid grid-cols-[76px_minmax(0,1fr)_24px_140px] items-center gap-x-1.5";
+
+// skill-match colour indicator (red / yellow / green)
+const SKILL_STYLE = {
+  green: { bar: "#22c55e", chip: "bg-emerald-500", soft: "bg-emerald-50 text-emerald-700", label: "Top skill" },
+  yellow: { bar: "#f59e0b", chip: "bg-amber-500", soft: "bg-amber-50 text-amber-700", label: "Set · not top" },
+  red: { bar: "#ef4444", chip: "bg-rose-500", soft: "bg-rose-50 text-rose-600", label: "No skill" },
+};
 
 function LayoutColumn({
   slots, color, typeOrder, operatorByMachine, operatorsLoading,
@@ -420,6 +450,7 @@ function LayoutColumn({
 
 function StationRow({ op, color, operator, operatorsLoading, editing, onEdit, lineNo, floor, exclude, onPick, zebra }) {
   const shared = op.operator_count > 1;
+  const isHelper = /HELP/i.test(op.machine_type || "");
   const rowBg = op.is_bottleneck ? "bg-rose-50" : zebra ? "bg-slate-50/60" : "bg-white";
   return (
     <div className={`${ROW_GRID} border-b border-slate-100 px-1 py-1.5 ${rowBg}`}>
@@ -437,14 +468,19 @@ function StationRow({ op, color, operator, operatorsLoading, editing, onEdit, li
         </div>
       </div>
 
-      {/* Operation(s) */}
+      {/* Operation(s) + employee type */}
       <div className="min-w-0">
         {op.operations.map((o, i) => (
           <div key={`${o.id}-${i}`} className="truncate text-[13px] leading-5 text-slate-700" title={`${o.operation_name} · ${o.smv}`}>
             {o.operation_name}
           </div>
         ))}
-        {shared ? <div className="text-[9px] leading-3 text-slate-400">Stn {op.station_no} · opr {op.sub_index}/{op.operator_count}</div> : null}
+        <div className="flex items-center gap-1 text-[9px] leading-3 text-slate-400">
+          <span className={`rounded px-1 py-px font-semibold uppercase ${isHelper ? "bg-violet-100 text-violet-600" : "bg-sky-100 text-sky-700"}`}>
+            {isHelper ? "Helper" : "Operator"}
+          </span>
+          {shared ? <span>Stn {op.station_no} · opr {op.sub_index}/{op.operator_count}</span> : null}
+        </div>
       </div>
 
       {/* SMV(s) */}
@@ -528,17 +564,48 @@ function MachinePicker({ op, editing, onEdit, lineNo, floor, exclude, onPick }) 
 function OperatorCell({ operator, loading, hasMachine }) {
   if (!hasMachine) return <span className="text-[11px] text-slate-300">—</span>;
   if (!operator) return <span className="text-[10px] text-slate-400">{loading ? "…" : "no punch"}</span>;
+
+  const skill = operator.skill || {};
+  const sty = SKILL_STYLE[skill.level] || null;         // null = ungraded
+  const top = skill.top_skill;
+  const assigned = skill.assigned_skill;
+
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-stretch gap-1.5">
+      {/* colour indicator: red = no skill, yellow = not top, green = top skill */}
+      <span
+        className="w-1 flex-shrink-0 rounded-full"
+        style={{ background: sty ? sty.bar : "#cbd5e1" }}
+        title={sty ? sty.label : "Not in skill matrix"}
+      />
       <OperatorAvatar name={operator.name} photo={operator.photo_url} />
-      <div className="min-w-0 leading-tight">
+      <div className="min-w-0 flex-1 leading-tight">
         <div className="truncate text-[11px] font-semibold text-slate-800" title={operator.name}>{operator.name}</div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
           {operator.designation ? <span className="truncate text-[9px] text-slate-500">{operator.designation}</span> : null}
-          {operator.efficiency != null ? (
-            <span className="rounded bg-emerald-500 px-1 text-[9px] font-bold text-white">{operator.efficiency}%</span>
+          {operator.grade ? <span className="rounded bg-slate-100 px-1 text-[8px] font-semibold text-slate-500">{operator.grade}</span> : null}
+        </div>
+        {/* skill status pill */}
+        <div className="mt-0.5 flex items-center gap-1">
+          {sty ? (
+            <span className={`rounded px-1 text-[8px] font-bold uppercase leading-tight text-white ${sty.chip}`}>
+              {skill.similar ? "Similar" : sty.label}
+            </span>
+          ) : (
+            <span className="rounded bg-slate-100 px-1 text-[8px] font-semibold uppercase text-slate-400">no matrix</span>
+          )}
+          {assigned?.efficiency != null ? (
+            <span className={`rounded px-1 text-[8px] font-bold ${sty ? sty.soft : "bg-slate-100 text-slate-500"}`}>{assigned.efficiency}%</span>
+          ) : operator.efficiency != null ? (
+            <span className="rounded bg-slate-100 px-1 text-[8px] font-bold text-slate-500">{operator.efficiency}%</span>
           ) : null}
         </div>
+        {/* top skill reference */}
+        {top?.operation_name ? (
+          <div className="truncate text-[8px] text-slate-400" title={`Top skill: ${top.operation_name}${top.efficiency != null ? ` · ${top.efficiency}%` : ""}`}>
+            ★ {top.operation_name}
+          </div>
+        ) : null}
       </div>
     </div>
   );
