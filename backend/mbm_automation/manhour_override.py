@@ -44,11 +44,15 @@ def ensure_table() -> None:
 
 
 def can_edit(user) -> bool:
-    """True when the user may edit COUNT FROM."""
+    """True when the user may edit COUNT FROM.
+
+    Access is restricted to members of the ``manhour_editor`` group ONLY —
+    being a superuser/staff is deliberately not enough, so COUNT FROM can be
+    locked to specific accounts (e.g. only ``owasik``). Grant access with the
+    ``create_manhour_editor`` management command.
+    """
     if not user or not user.is_authenticated:
         return False
-    if user.is_superuser:
-        return True
     return user.groups.filter(name=GROUP_NAME).exists()
 
 
