@@ -416,6 +416,7 @@ function HourlyProduction({ token, date }) {
 
 export default function Reports() {
   const token = useAuthStore((s) => s.accessToken);
+  const qc = useQueryClient();
   const [urlParams] = useSearchParams();
   const [tab, setTab] = useState(urlParams.get("tab") || "efficiency");
   const [from, setFrom] = useState(urlParams.get("date") || todayISO());
