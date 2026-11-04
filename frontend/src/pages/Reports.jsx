@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileSpreadsheet, Printer } from "lucide-react";
+import { FileSpreadsheet, Pencil, Printer } from "lucide-react";
 import toast from "react-hot-toast";
 
 import api from "../lib/api";
@@ -24,6 +24,97 @@ function MStat({ label, value, tone = "" }) {
       <div className="text-[9px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
       <div className={`text-[14px] font-bold tabular-nums ${tone || "text-slate-800"}`}>{value}</div>
     </div>
+  );
+}
+
+// COUNT FROM cell: read-only for everyone, inline-editable for authorised users
+function CountFromCell({ r, canEdit, saving, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(r.count_from_time || "08:00");
+
+  const dot = r.count_from_overridden ? (
+    <span
+      className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+      title="Manually overridden"
+    />
+  ) : null;
+
+  if (!canEdit) {
+    return (
+      <span title={r.count_from_overridden ? "Manually overridden" : "Auto (08:00 or first punch)"}>
+        {r.count_from}
+        {dot}
+      </span>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setVal(r.count_from_time || "08:00");
+          setEditing(true);
+        }}
+        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium hover:bg-amber-50 hover:text-amber-700"
+        title="Click to edit the man-hour start time"
+      >
+        {r.count_from}
+        {dot}
+        <Pencil className="h-3 w-3 opacity-50" />
+      </button>
+    );
+  }
+
+  const commit = (value) => {
+    onSave(value);
+    setEditing(false);
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="time"
+        autoFocus
+        value={val}
+        disabled={saving}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit(val);
+          if (e.key === "Escape") setEditing(false);
+        }}
+        className="w-[92px] rounded border border-slate-300 px-1 py-0.5 text-[12px]"
+      />
+      <button
+        type="button"
+        onClick={() => commit(val)}
+        disabled={saving}
+        className="rounded bg-emerald-600 px-1.5 py-0.5 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+        title="Save"
+      >
+        ✓
+      </button>
+      {r.count_from_overridden ? (
+        <button
+          type="button"
+          onClick={() => commit("")}
+          disabled={saving}
+          className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 disabled:opacity-50"
+          title="Reset to auto (08:00 / first punch)"
+        >
+          auto
+        </button>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        disabled={saving}
+        className="rounded px-1 py-0.5 text-[11px] text-slate-400 hover:text-slate-600"
+        title="Cancel"
+      >
+        ✕
+      </button>
+    </span>
   );
 }
 
@@ -355,6 +446,30 @@ export default function Reports() {
     queryFn: () =>
       api.get("/automation/floor_overview_staff/", { params: { date: from } }).then((r) => r.data),
     enabled: !!token && tab === "manhour",
+  });
+
+  // who is logged in + whether they may edit COUNT FROM
+  const me = useQuery({
+    queryKey: ["auth-me"],
+    queryFn: () => api.get("/auth/me/").then((r) => r.data),
+    enabled: !!token,
+    staleTime: 5 * 60 * 1000,
+  });
+  const canEditCountFrom =
+    (manhour.data?.can_edit_count_from ?? me.data?.can_edit_count_from) || false;
+
+  // authorised edit of a machine's COUNT FROM (recomputes its man hour)
+  const countFromMut = useMutation({
+    mutationFn: ({ machin_no, count_from }) =>
+      api
+        .post("/automation/manhour/count_from/", { date: from, machin_no, count_from })
+        .then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["manhour-details", from] });
+      toast.success("Count From updated");
+    },
+    onError: (err) =>
+      toast.error(err?.response?.data?.detail || "Update failed"),
   });
 
   const nptSummary = useQuery({
@@ -917,7 +1032,14 @@ export default function Reports() {
                     <td className={`${td} max-w-[220px] truncate text-left`} title={r.operators.join(", ")}>{r.operators.join(", ") || "—"}</td>
                     <td className={td}>{r.in_time}</td>
                     <td className={td}>{r.sewing_start}</td>
-                    <td className={`${td} text-slate-500`}>{r.count_from}</td>
+                    <td className={`${td} ${r.count_from_overridden ? "text-amber-700" : "text-slate-500"}`}>
+                      <CountFromCell
+                        r={r}
+                        canEdit={canEditCountFrom}
+                        saving={countFromMut.isPending}
+                        onSave={(v) => countFromMut.mutate({ machin_no: r.mid, count_from: v })}
+                      />
+                    </td>
                     <td className={td}>{r.break_display}</td>
                     <td className={td}>
                       {r.still_in ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Running</span> : r.out_time}

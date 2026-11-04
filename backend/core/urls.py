@@ -5,7 +5,7 @@ from django.http import JsonResponse
 from django.urls import include, path
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from core.auth import EmailOrUsernameTokenObtainPairView
+from core.auth import EmailOrUsernameTokenObtainPairView, MeView
 
 
 def health(_request):
@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/health/", health),
     path("api/auth/token/", EmailOrUsernameTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/auth/me/", MeView.as_view(), name="auth_me"),
     path("api/floors/", include("floors.urls")),
     path("api/employees/", include("employees.urls")),
     path("api/camera/", include("attendance.urls")),

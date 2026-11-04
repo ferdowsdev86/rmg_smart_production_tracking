@@ -1199,12 +1199,22 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             "actual_display": _hm_display(work - brk),
         }
 
+    # manual COUNT FROM overrides set by authorised users (default DB)
+    from mbm_automation import manhour_override
+
+    overrides = manhour_override.get_overrides(on_date)
+
     machine_hours: dict[str, dict] = {}
     for mid, m in machine_raw.items():
         # counting starts at 08:00 — a punch before 8 counts from 8, a
-        # later punch counts from when that machine actually started
-        eight = m["in_dt"].replace(hour=8, minute=0, second=0, microsecond=0)
-        start_dt = max(m["in_dt"], eight)
+        # later punch counts from when that machine actually started —
+        # unless an authorised user has manually overridden COUNT FROM.
+        ov = overrides.get(int(mid))
+        if ov is not None:
+            start_dt = m["in_dt"].replace(hour=ov.hour, minute=ov.minute, second=0, microsecond=0)
+        else:
+            eight = m["in_dt"].replace(hour=8, minute=0, second=0, microsecond=0)
+            start_dt = max(m["in_dt"], eight)
         work = max(0, int((m["end_dt"] - start_dt).total_seconds()))
         brk = _break_seconds(work, m["end_dt"])
         machine_hours[mid] = {
@@ -1212,6 +1222,8 @@ def staff_punch_summary(on_date) -> tuple[dict[str, list[dict]], dict, dict[str,
             "operators": [r["name"] for r in machines.get(mid, [])],
             "in_time": _ampm(m["in_dt"]),
             "count_from": _ampm(start_dt),
+            "count_from_time": f"{start_dt.hour:02d}:{start_dt.minute:02d}",
+            "count_from_overridden": ov is not None,
             "sewing_start": _ampm(sew_start_by_machine.get(mid)),
             "out_time": "—" if m["still_in"] else _ampm(m["end_dt"]),
             "break_seconds": brk,
@@ -1266,12 +1278,64 @@ class FloorOverviewStaffView(APIView):
     def get(self, request):
         on_date = _parse_on_date(request.query_params.get("date"))
         machines, totals, _persons, machine_hours = staff_punch_summary(on_date)
+        from mbm_automation.manhour_override import can_edit
+
         return Response(
             {
                 "date": on_date.isoformat(),
                 "break_per_staff_seconds": STAFF_BREAK_SECONDS,
                 "machines": machines,
                 "machine_hours": machine_hours,
+                "totals": totals,
+                "can_edit_count_from": can_edit(request.user),
+            }
+        )
+
+
+class ManHourCountFromView(APIView):
+    """POST /api/automation/manhour/count_from/
+
+    Body: ``{date, machin_no, count_from}`` where count_from is 'HH:MM' (24h) or
+    empty/null to clear the override. Only members of the ``manhour_editor``
+    group (plus superusers) may edit; everyone else gets 403. Overriding COUNT
+    FROM recomputes that machine's Working Hour and Man Hour.
+    """
+
+    def post(self, request):
+        from rest_framework import status as drf_status
+
+        from mbm_automation import manhour_override
+
+        if not manhour_override.can_edit(request.user):
+            return Response(
+                {"detail": "You do not have access to edit COUNT FROM."},
+                status=drf_status.HTTP_403_FORBIDDEN,
+            )
+
+        d = request.data or {}
+        on_date = _parse_on_date(d.get("date"))
+        machin_no = d.get("machin_no")
+        try:
+            machin_no = int(machin_no)
+        except (TypeError, ValueError):
+            return Response({"detail": "machin_no is required."}, status=400)
+
+        count_from = d.get("count_from")
+        if count_from not in (None, "") and manhour_override._parse_hhmm(count_from) is None:
+            return Response({"detail": "count_from must be HH:MM (24h)."}, status=400)
+
+        saved = manhour_override.set_override(
+            on_date, machin_no, count_from, user=request.user, note=(d.get("note") or None)
+        )
+        # the day's summary is cached ~30s — drop it so the new man hours show
+        _STAFF_CACHE.pop(on_date.isoformat(), None)
+
+        machines, totals, _persons, machine_hours = staff_punch_summary(on_date)
+        return Response(
+            {
+                "date": on_date.isoformat(),
+                "saved": saved,
+                "row": machine_hours.get(str(machin_no)),
                 "totals": totals,
             }
         )
